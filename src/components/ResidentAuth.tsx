@@ -68,7 +68,7 @@ export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmploy
   };
 
   return (
-    <div className="w-full h-full flex items-center justify-center p-4 sm:p-6">
+    <div className="w-full min-h-screen flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center justify-center lg:justify-between gap-6 lg:gap-12">
         {/* Left Side: Text and Building Logo */}
         <div className="hidden lg:flex flex-col gap-4 text-white">
