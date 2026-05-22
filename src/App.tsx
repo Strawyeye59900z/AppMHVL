@@ -161,7 +161,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-950 bg-fixed text-[#E4E4E7] flex flex-col font-sans">
+    <div className="min-h-screen bg-gradient-to-br from-[#020617] via-[#0f172a] to-[#1e293b] text-[#E4E4E7] flex flex-col font-sans">
       
       {/* GLOBAL NAVIGATION HEADER */}
       {!(activeTab === 'resident' && !loggedInResident) && (
