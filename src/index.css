@@ -16,6 +16,15 @@
   --color-dark-hover: #1f2937;
 }
 
+@layer base {
+  html, body {
+    @apply bg-slate-950 min-h-screen m-0 p-0 overflow-x-hidden;
+  }
+  #root {
+    @apply min-h-screen bg-transparent;
+  }
+}
+
 /* Authentic Google Material Sign-In Button styles adjusted for dark-theme Sophisticated vibe */
 .gsi-material-button {
   -moz-user-select: none;
