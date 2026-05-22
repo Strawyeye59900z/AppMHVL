@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { User, Home, Lock, KeyRound, Building } from 'lucide-react';
+import { User, Home, Lock, KeyRound, Building2 } from 'lucide-react';
 import { Resident } from '../types';
 
 interface ResidentAuthProps {
@@ -68,25 +68,25 @@ export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmploy
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-6 bg-[#020617] bg-cover bg-center" style={{ backgroundImage: "url('/building_1779488711523.png')" }}>
-      <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center justify-center lg:justify-between gap-8 lg:gap-12">
+    <div className="w-full h-full flex items-center justify-center p-4 sm:p-6">
+      <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center justify-center lg:justify-between gap-6 lg:gap-12">
         {/* Left Side: Text and Building Logo */}
         <div className="hidden lg:flex flex-col gap-4 text-white">
-          <div className="w-20 h-20 rounded-3xl bg-blue-600 flex items-center justify-center text-white shadow-2xl shadow-blue-900/50">
-            <Building size={40} />
+          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center text-white shadow-2xl">
+            <Building2 size={40} className="text-white" />
           </div>
-          <h1 className="font-display text-5xl font-bold tracking-tight">
+          <h1 className="font-display text-4xl sm:text-5xl font-bold tracking-tight">
             Mansão<br />Heitor Vila Lobos
           </h1>
         </div>
 
         {/* Right Side: Login Card */}
-        <div id="resident-auth-card" className="w-full max-w-md bg-[#0f172a]/90 backdrop-blur-3xl border border-white/10 rounded-[32px] shadow-2xl p-8 lg:p-10 overflow-hidden text-zinc-100">
-          <div className="text-center mb-10 flex flex-col items-center">
-            <h2 className="font-display text-3xl font-bold tracking-tight text-white">
+        <div id="resident-auth-card" className="w-full max-w-sm sm:max-w-md bg-[#0f172a]/90 backdrop-blur-3xl border border-white/10 rounded-[28px] sm:rounded-[32px] shadow-2xl p-6 sm:p-8 lg:p-10 overflow-hidden text-zinc-100">
+          <div className="text-center mb-8 sm:mb-10 flex flex-col items-center">
+            <h2 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-white">
               Bem-vindo(a)!
             </h2>
-            <p className="text-sm text-zinc-400 mt-2 font-sans max-w-xs">
+            <p className="text-xs sm:text-sm text-zinc-400 mt-2 font-sans max-w-xs">
               Acesse sua conta para utilizar os serviços do condomínio.
             </p>
           </div>
@@ -165,7 +165,7 @@ export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmploy
                 onClick={onEmployeeInitiate}
                 className="text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer font-display flex items-center justify-center gap-2 bg-white/5 py-4 rounded-xl border border-white/10 hover:border-blue-500/30 hover:bg-white/10"
               >
-                <Building size={16} /> Sou Funcionário
+                <Building2 size={16} /> Sou Funcionário
               </button>
 
               <button
