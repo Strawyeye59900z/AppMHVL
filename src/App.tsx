@@ -14,16 +14,17 @@ import AdminDashboard from './components/AdminDashboard';
 import ReservationSection from './components/ReservationSection';
 import ResidentReservationsSidePanel from './components/ResidentReservationsSidePanel';
 import EmployeePanel from './components/EmployeePanel';
+import BottomNav from './components/BottomNav';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'resident' | 'admin' | 'employee'>('resident');
-  const [residentView, setResidentView] = useState<'family' | 'reservations'>('family');
+  const [residentView, setResidentView] = useState<'inicio' | 'reservar' | 'encomendas' | 'family'>('inicio');
   const [loggedInResident, setLoggedInResident] = useState<Resident | null>(null);
   const [captureTarget, setCaptureTarget] = useState<Resident | null>(null);
   const [adminUser, setAdminUser] = useState<any>(null);
   
   // Employee Login State
-  const [employeeSession, setEmployeeSession] = useState<{ id: string; name: string } | null>(null);
+  const [employeeSession, setEmployeeSession] = useState<{ id: string; name: string; photoDataUrl?: string } | null>(null);
   const [employeePassword, setEmployeePassword] = useState('');
   const [employeeError, setEmployeeError] = useState('');
   const [employeeLoading, setEmployeeLoading] = useState(false);
@@ -114,7 +115,8 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        setEmployeeSession(data.employee);
+        const empInfo = allEmployees.find(e => e.id === data.employee.id);                
+        setEmployeeSession({ ...data.employee, photoDataUrl: empInfo?.photoDataUrl });
         setEmployeePassword('');
       } else {
         setEmployeeError(data.error || 'Senha inválida.');
@@ -159,49 +161,25 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-dark-bg text-[#E4E4E7] flex flex-col font-sans">
+    <div className="min-h-screen bg-gradient-to-br from-[#020617] via-[#0f172a] to-[#1e293b] text-[#E4E4E7] flex flex-col font-sans">
       
       {/* GLOBAL NAVIGATION HEADER */}
-      <header className="border-b border-dark-border bg-dark-card sticky top-0 z-40 select-none">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gold flex items-center justify-center text-black font-bold text-sm tracking-widest font-display shadow-lg shadow-gold/10 animate-pulse-subtle">
-              <Building size={18} />
+      {!(activeTab === 'resident' && !loggedInResident) && (
+        <header className="border-b border-white/5 bg-[#0f172a]/20 backdrop-blur-md sticky top-0 z-40 select-none">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold text-sm tracking-widest font-display shadow-lg shadow-blue-900/40">
+                <Building size={18} />
+              </div>
+              <div>
+                <h1 className="font-display font-bold text-sm tracking-tight text-white">Mansão Heitor Vila Lobos</h1>
+                <p className="text-[10px] text-blue-300/60 font-mono tracking-widest">SISTEMA CONDOMINIAL</p>
+              </div>
             </div>
-            <div>
-              <h1 className="font-display font-bold text-sm tracking-tight text-white">Heitor Vila Lobos</h1>
-              <p className="text-[10px] text-zinc-500 font-mono tracking-widest">PORTARIA INTELIGENTE</p>
-            </div>
-          </div>
 
-          {/* TOGGLE NAVIGATION PORTAL (Coordinator Only) */}
-          {adminUser && adminUser.email === 'gabriel.nunez.costa@gmail.com' && (
-            <div className="flex bg-dark-input rounded-xl p-1 gap-1 border border-dark-border animate-fade-in text-[11px] font-semibold">
-              <button
-                id="app-tab-resident"
-                onClick={() => setActiveTab('resident')}
-                className={`px-3 py-1.5 cursor-pointer rounded-lg transition-all font-display ${activeTab === 'resident' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
-              >
-                Morador
-              </button>
-              <button
-                id="app-tab-employee"
-                onClick={() => setActiveTab('employee')}
-                className={`px-3 py-1.5 cursor-pointer rounded-lg transition-all font-display ${activeTab === 'employee' ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'text-zinc-400 hover:text-white'}`}
-              >
-                Portaria
-              </button>
-              <button
-                id="app-tab-admin"
-                onClick={() => setActiveTab('admin')}
-                className={`px-3 py-1.5 cursor-pointer rounded-lg transition-all font-display ${activeTab === 'admin' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
-              >
-                Síndico
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
+          </div>
+        </header>
+      )}
 
       {/* CORE CONTENT SHELF */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 flex flex-col items-center justify-center">
@@ -234,19 +212,21 @@ export default function App() {
                   
                   {/* LEFT PRIMARY PANEL CONTAINER */}
                   <div className="lg:col-span-8 space-y-6 w-full flex flex-col items-center">
-                    {residentView === 'family' ? (
-                      /* Family management panel for adding members and capturing photos */
+                    {residentView === 'inicio' || residentView === 'family' || residentView === 'encomendas' ? (
+                      /* RESIDENT STATUS (covers INICIO, FAMILY and ENCOMENDAS) */
                       <ResidentStatus 
                         resident={loggedInResident} 
                         onLogout={handleResidentLogout} 
                         onCaptureRequest={(member) => setCaptureTarget(member)}
+                        // Pass down the current view so ResidentStatus knows whether to show family, packages or me
+                        initialTab={residentView === 'family' ? 'family' : residentView === 'encomendas' ? 'packages' : 'me'}
                       />
-                    ) : (
+                    ) : residentView === 'reservar' ? (
                       <div className="w-full bg-[#121214]/60 rounded-2xl border border-dark-border shadow-xl p-4 sm:p-6 space-y-6">
                         <div className="flex justify-between items-center border-b border-dark-border pb-4 mb-4 select-none">
                           <div>
                             <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest font-semibold text-gold">Apto {loggedInResident.apartment} {loggedInResident.block !== 'Único' ? `/ Bloco ${loggedInResident.block}` : ''}</span>
-                            <h3 className="text-sm font-semibold text-white">Espaço {loggedInResident.name}</h3>
+                            <h3 className="text-sm font-semibold text-white">Reservas</h3>
                           </div>
                           <button 
                             onClick={handleResidentLogout}
@@ -258,6 +238,10 @@ export default function App() {
                         
                         <ReservationSection resident={loggedInResident} isAdmin={false} />
                       </div>
+                    ) : (
+                      <div className="w-full p-10 text-center text-zinc-500">
+                        Visualização não encontrada.
+                      </div>
                     )}
                   </div>
 
@@ -266,34 +250,6 @@ export default function App() {
                     <ResidentReservationsSidePanel resident={loggedInResident} />
                   </div>
 
-                </div>
-
-                {/* BOTTOM NAVIGATION WINDOW SWITCHER FOR AMENITIES VS MEMBERS */}
-                <div className="flex bg-dark-card border border-dark-border rounded-xl p-1.5 max-w-sm w-full mx-auto shadow-xl select-none gap-2">
-                  <button
-                    id="resident-switch-family"
-                    onClick={() => setResidentView('family')}
-                    className={`flex-1 flex flex-col items-center justify-center gap-1.5 py-2 px-2 rounded-lg cursor-pointer text-[11px] font-semibold transition-all ${
-                      residentView === 'family' 
-                        ? 'bg-gold text-black shadow-lg shadow-gold/15' 
-                        : 'text-zinc-400 hover:text-white hover:bg-dark-hover'
-                    }`}
-                  >
-                    <span className="text-sm">👥</span>
-                    <span>Minha Família</span>
-                  </button>
-                  <button
-                    id="resident-switch-reservations"
-                    onClick={() => setResidentView('reservations')}
-                    className={`flex-1 flex flex-col items-center justify-center gap-1.5 py-2 px-2 rounded-lg cursor-pointer text-[11px] font-semibold transition-all ${
-                      residentView === 'reservations' 
-                        ? 'bg-gold text-black shadow-lg shadow-gold/15' 
-                        : 'text-zinc-400 hover:text-white hover:bg-dark-hover'
-                    }`}
-                  >
-                    <span className="text-sm">📅</span>
-                    <span>Reservar Áreas</span>
-                  </button>
                 </div>
               </div>
             )}
@@ -485,12 +441,16 @@ export default function App() {
       </main>
 
       {/* MINIMAL FOOTER DECORATION */}
-      <footer className="border-t border-dark-border bg-dark-card text-center py-5 select-none">
+      <footer className="border-t border-dark-border bg-dark-card text-center py-5 select-none pb-24">
         <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">
           © {new Date().getFullYear()} Condomínio Portaria Segura • Powered by Google Drive API
         </p>
       </footer>
 
+      {/* PERSISTENT BOTTOM NAVIGATION - ONLY FOR LOGGED IN RESIDENTS */}
+      {activeTab === 'resident' && loggedInResident && (
+        <BottomNav activeTab={residentView} onTabChange={setResidentView} />
+      )}
     </div>
   );
 }

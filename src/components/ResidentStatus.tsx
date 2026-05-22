@@ -12,10 +12,15 @@ interface ResidentStatusProps {
   resident: Resident;
   onLogout: () => void;
   onCaptureRequest: (member: Resident) => void;
+  initialTab?: 'me' | 'family';
 }
 
-export default function ResidentStatus({ resident, onLogout, onCaptureRequest }: ResidentStatusProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'me' | 'family' | 'packages'>('me');
+export default function ResidentStatus({ resident, onLogout, onCaptureRequest, initialTab = 'me' }: ResidentStatusProps) {
+  const [activeSubTab, setActiveSubTab] = useState<'me' | 'family' | 'packages'>(initialTab);
+  useEffect(() => {
+    setActiveSubTab(initialTab);
+  }, [initialTab]);
+
   const [members, setMembers] = useState<Resident[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [newMemberName, setNewMemberName] = useState('');
@@ -25,74 +30,6 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest }:
   
   const [packages, setPackages] = useState<any[]>([]);
   const [loadingPackages, setLoadingPackages] = useState(false);
-
-  const [notificationPermission, setNotificationPermission] = useState<string>('default');
-  const [userOS, setUserOS] = useState<'ios' | 'android' | 'other'>('other');
-  const prevPackagesRef = useRef<string[]>([]);
-
-  useEffect(() => {
-    if ('Notification' in window) {
-      setNotificationPermission(Notification.permission);
-    }
-    const ua = navigator.userAgent.toLowerCase();
-    if (/iphone|ipad|ipod/.test(ua)) {
-      setUserOS('ios');
-    } else if (/android/.test(ua)) {
-      setUserOS('android');
-    } else {
-      setUserOS('other');
-    }
-  }, []);
-
-  const triggerBrowserNotification = (pkg: any) => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        new Notification("📦 Encomenda Recebida!", {
-          body: `Uma nova encomenda (${pkg.description}) chegou na portaria para você!`,
-          icon: "/favicon.ico",
-          tag: pkg.id,
-          requireInteraction: true
-        });
-      } catch (err) {
-        console.error("Failed to show notification:", err);
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (packages.length > 0) {
-      const pendingPackages = packages.filter(p => p.status === 'pending');
-      const newPending = pendingPackages.filter(p => !prevPackagesRef.current.includes(p.id));
-
-      if (newPending.length > 0 && prevPackagesRef.current.length > 0) {
-        newPending.forEach((pkg) => {
-          triggerBrowserNotification(pkg);
-        });
-      }
-      prevPackagesRef.current = packages.map(p => p.id);
-    } else {
-      prevPackagesRef.current = [];
-    }
-  }, [packages]);
-
-  const requestPermission = async () => {
-    if (!('Notification' in window)) {
-      alert("Este navegador não suporta notificações de sistema.");
-      return;
-    }
-    try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
-      if (permission === 'granted') {
-        new Notification("🔔 Notificações Ativadas!", {
-          body: "Parabéns! Você receberá avisos sobre a chegada de encomendas em tempo real.",
-          icon: "/favicon.ico"
-        });
-      }
-    } catch (err) {
-      console.error("Error setting notification permission:", err);
-    }
-  };
 
   const isSync = resident.syncStatus === 'synced';
 
@@ -226,28 +163,6 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest }:
         </motion.div>
       )}
 
-      {/* Sub-tab switcher */}
-      <div className="flex bg-dark-input rounded-xl p-1 mb-6 border border-dark-border select-none">
-        <button
-          onClick={() => setActiveSubTab('me')}
-          className={`flex-1 py-1.5 text-[10px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer flex items-center justify-center gap-1.5 ${activeSubTab === 'me' ? 'bg-gold text-black shadow-lg shadow-gold/10' : 'text-zinc-400 hover:text-white'}`}
-        >
-          <User size={12} /> Minha Facial
-        </button>
-        <button
-          onClick={() => setActiveSubTab('family')}
-          className={`flex-1 py-1.5 text-[10px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer flex items-center justify-center gap-1.5 ${activeSubTab === 'family' ? 'bg-gold text-black shadow-lg shadow-gold/10' : 'text-zinc-400 hover:text-white'}`}
-        >
-          <Users size={12} /> Familiares
-        </button>
-        <button
-          onClick={() => setActiveSubTab('packages')}
-          className={`flex-1 py-1.5 text-[10px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer flex items-center justify-center gap-1.5 ${activeSubTab === 'packages' ? 'bg-gold text-black shadow-lg shadow-gold/10' : 'text-zinc-400 hover:text-white'}`}
-        >
-          <Package size={12} /> Encomendas ({packages.filter(p => p.status === 'pending').length})
-        </button>
-      </div>
-
       <div className="flex-1">
         {activeSubTab === 'me' && (
           <div>
@@ -345,91 +260,6 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest }:
               </div>
             </div>
 \t\t\t
-            {resident.photoDataUrl && (
-              <div id="web-push-tutorial-card" className="my-6 p-5 bg-dark-input border border-dark-border rounded-xl text-left space-y-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">🔔</span>
-                  <div>
-                    <h3 className="font-display text-sm font-semibold text-white">Notificações Web Push</h3>
-                    <p className="text-[10px] text-zinc-500">Substituto de notificações para celular. Receba avisos direto na tela do aparelho!</p>
-                  </div>
-                </div>
-
-                {notificationPermission === 'granted' ? (
-                  <div className="p-3 bg-emerald-950/20 border border-emerald-900/30 rounded-xl flex items-center gap-2.5 text-emerald-400">
-                    <span className="text-base select-none">✔</span>
-                    <div className="text-xs">
-                      <p className="font-bold">Notificações Ativas!</p>
-                      <p className="text-[10px] text-zinc-400 mt-0.5 font-sans">Seu celular ou computador receberá alertas em tempo real sobre novas encomendas.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="text-xs text-zinc-400 space-y-1">
-                      <p>Para ativar as notificações automáticas e dispensar o WhatsApp, veja como configurar seu celular:</p>
-                    </div>
-
-                    <div className="bg-dark-card border border-dark-border/85 p-3.5 rounded-xl space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold font-display uppercase tracking-wider text-gold">
-                          Passo a Passo: {userOS === 'ios' ? 'iOS (iPhone / iPad)' : userOS === 'android' ? 'Android' : 'Computador / Celular'}
-                        </span>
-                        <div className="flex gap-1 select-none">
-                          <button
-                            type="button"
-                            onClick={() => setUserOS('ios')}
-                            className={`px-2 py-0.5 text-[9px] font-semibold rounded ${userOS === 'ios' ? 'bg-zinc-700 text-white border border-zinc-600' : 'bg-transparent text-zinc-500 hover:text-zinc-300'}`}
-                          >
-                            iOS
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setUserOS('android')}
-                            className={`px-2 py-0.5 text-[9px] font-semibold rounded ${userOS === 'android' ? 'bg-zinc-700 text-white border border-zinc-600' : 'bg-transparent text-zinc-500 hover:text-zinc-300'}`}
-                          >
-                            Android
-                          </button>
-                        </div>
-                      </div>
-
-                      {userOS === 'ios' ? (
-                        <ol className="text-[11px] text-zinc-300 space-y-1.5 list-decimal list-inside font-sans leading-relaxed">
-                          <li>Abra este site no navegador de internet <strong className="text-white font-semibold">Safari</strong>.</li>
-                          <li>Clique no botão <strong className="text-white font-semibold">Compartilhar</strong> (retângulo com seta para cima).</li>
-                          <li>Role a lista de opções e clique em <strong className="text-white font-semibold">"Adicionar à Tela de Início"</strong>.</li>
-                          <li>Abra o aplicativo através do ícone adicionado em sua tela inicial.</li>
-                          <li>Clique no botão azul abaixo para autorizar os alertas por push no aparelho.</li>
-                        </ol>
-                      ) : userOS === 'android' ? (
-                        <ol className="text-[11px] text-zinc-300 space-y-1.5 list-decimal list-inside font-sans leading-relaxed">
-                          <li>Acesse este painel utilizando o navegador <strong className="text-white font-semibold">Google Chrome</strong>.</li>
-                          <li>Toque nos três pontos no canto superior direito para abrir o menu do navegador.</li>
-                          <li>Selecione a opção <strong className="text-white font-semibold">"Instalar Aplicativo"</strong> ou <strong className="text-white font-semibold">"Adicionar à tela principal"</strong>.</li>
-                          <li>Ao abrir o app da tela inicial, toque no botão azul abaixo para conceder a permissão de Push.</li>
-                        </ol>
-                      ) : (
-                        <ol className="text-[11px] text-zinc-300 space-y-1.5 list-decimal list-inside font-sans leading-relaxed">
-                          <li>Recomendamos usar o Google Chrome, Safari ou Microsoft Edge.</li>
-                          <li>Clique no botão azul abaixo para iniciar.</li>
-                          <li>Quando o navegador perguntar, clique em <strong className="text-white font-semibold">Permitir</strong> para habilitar as notificações.</li>
-                        </ol>
-                      )}
-                    </div>
-
-                    <button
-                      id="web-push-permission-btn"
-                      type="button"
-                      onClick={requestPermission}
-                      className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl text-xs transition-colors shadow-lg shadow-blue-600/10 cursor-pointer select-none text-center font-display"
-                    >
-                      {notificationPermission === 'denied' 
-                        ? 'Permissão Bloqueada (Habilite nas configurações do navegador)' 
-                        : 'Ativar Notificações Web Push (Conceder Permissão)'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
 
             <button
               onClick={() => onCaptureRequest(resident)}

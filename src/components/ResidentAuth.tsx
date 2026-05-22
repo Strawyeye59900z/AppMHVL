@@ -68,142 +68,116 @@ export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmploy
   };
 
   return (
-    <div id="resident-auth-card" className="w-full max-w-md bg-dark-card border border-dark-border rounded-2xl shadow-xl shadow-black/40 p-8 overflow-hidden">
-      <div className="text-center mb-8">
-        <h2 className="font-display text-2xl font-semibold tracking-tight text-white">
-          {isSignUp ? 'Cadastro de Morador' : 'Acesso do Morador'}
-        </h2>
-        <p className="text-xs text-zinc-400 mt-2 font-sans">
-          {isSignUp 
-            ? 'Crie seu cadastro para enviar seu reconhecimento facial.' 
-            : 'Acesse o aplicativo para realizar ou verificar seu cadastro.'}
-        </p>
-      </div>
+    <div className="min-h-screen w-full flex items-center justify-center p-6 bg-[#020617] bg-cover bg-center" style={{ backgroundImage: "url('/building_1779488711523.png')" }}>
+      <div className="w-full max-w-5xl flex flex-col lg:flex-row items-center justify-center lg:justify-between gap-8 lg:gap-12">
+        {/* Left Side: Text and Building Logo */}
+        <div className="hidden lg:flex flex-col gap-4 text-white">
+          <div className="w-20 h-20 rounded-3xl bg-blue-600 flex items-center justify-center text-white shadow-2xl shadow-blue-900/50">
+            <Building size={40} />
+          </div>
+          <h1 className="font-display text-5xl font-bold tracking-tight">
+            Mansão<br />Heitor Vila Lobos
+          </h1>
+        </div>
 
-      {error && (
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-4 mb-6 bg-red-950/40 border border-red-900/50 text-red-400 rounded-lg text-sm"
-        >
-          {error}
-        </motion.div>
-      )}
+        {/* Right Side: Login Card */}
+        <div id="resident-auth-card" className="w-full max-w-md bg-[#0f172a]/90 backdrop-blur-3xl border border-white/10 rounded-[32px] shadow-2xl p-8 lg:p-10 overflow-hidden text-zinc-100">
+          <div className="text-center mb-10 flex flex-col items-center">
+            <h2 className="font-display text-3xl font-bold tracking-tight text-white">
+              Bem-vindo(a)!
+            </h2>
+            <p className="text-sm text-zinc-400 mt-2 font-sans max-w-xs">
+              Acesse sua conta para utilizar os serviços do condomínio.
+            </p>
+          </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {isSignUp && (
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Nome Completo</label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-zinc-500 pointer-events-none">
-                <User size={18} />
-              </span>
-              <input
-                id="resident-signup-name"
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ex: João da Silva"
-                className="w-full pl-10 pr-4 py-2.5 bg-dark-input border border-dark-border rounded-xl text-sm focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all text-white placeholder-zinc-600"
-                required={isSignUp}
-              />
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 mb-6 bg-red-950/40 border border-red-900/50 text-red-400 rounded-2xl text-sm"
+            >
+              {error}
+            </motion.div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Usuário</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50">
+                    <User size={18} />
+                  </span>
+                  <input
+                    id="resident-auth-apartment"
+                    type="text"
+                    value={apartment}
+                    onChange={(e) => setApartment(e.target.value)}
+                    placeholder="Seu usuário"
+                    className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Senha</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50">
+                    <Lock size={18} />
+                  </span>
+                  <input
+                    id="resident-auth-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Digite sua senha"
+                    className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500"
+                  />
+                </div>
+              </div>
             </div>
+
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-400 hover:text-white transition-colors">
+                <input type="checkbox" className="rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-blue-500" />
+                Lembrar meu acesso
+              </label>
+            </div>
+
+            <button
+              id="resident-auth-submit-btn"
+              type="submit"
+              disabled={loading}
+              className="w-full py-4 px-4 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-semibold rounded-2xl text-sm transition-all cursor-pointer shadow-lg shadow-blue-500/20 active:scale-[0.98] disabled:opacity-50 font-display"
+            >
+              {loading ? 'Processando...' : 'Entrar na Conta'}
+            </button>
+          </form>
+
+          <div className="mt-8 pt-8 border-t border-white/5 flex flex-col items-center gap-6">
+            <p className="text-xs text-zinc-500 font-medium">OU</p>
             
-            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display mt-4">WhatsApp (com DDD)</label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-zinc-500 pointer-events-none text-xs font-mono font-bold select-none">+55</span>
-              <input
-                id="resident-signup-phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="Ex: 11999999999"
-                className="w-full pl-12 pr-4 py-2.5 bg-dark-input border border-dark-border rounded-xl text-sm focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all text-white placeholder-zinc-600 font-mono"
-                required={isSignUp}
-              />
+            <div className="grid grid-cols-2 gap-4 w-full">
+              <button
+                id="resident-goto-employee-btn"
+                type="button"
+                onClick={onEmployeeInitiate}
+                className="text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer font-display flex items-center justify-center gap-2 bg-white/5 py-4 rounded-xl border border-white/10 hover:border-blue-500/30 hover:bg-white/10"
+              >
+                <Building size={16} /> Sou Funcionário
+              </button>
+
+              <button
+                id="resident-goto-admin-btn"
+                type="button"
+                onClick={onAdminInitiate}
+                className="text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer font-display flex items-center justify-center gap-2 bg-white/5 py-4 rounded-xl border border-white/10 hover:border-blue-500/30 hover:bg-white/10"
+              >
+                <Lock size={16} /> Administração
+              </button>
             </div>
           </div>
-        )}
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Apartamento</label>
-          <div className="relative">
-            <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-zinc-500 pointer-events-none">
-              <Home size={18} />
-            </span>
-            <input
-              id="resident-auth-apartment"
-              type="text"
-              value={apartment}
-              onChange={(e) => setApartment(e.target.value)}
-              placeholder="Ex: 101"
-              className="w-full pl-10 pr-4 py-2.5 bg-dark-input border border-dark-border rounded-xl text-sm focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all text-white placeholder-zinc-600"
-              required
-            />
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Senha de Acesso</label>
-          <div className="relative">
-            <span className="absolute inset-y-0 left-0 flex items-center pl-3.5 text-zinc-500 pointer-events-none">
-              <Lock size={18} />
-            </span>
-            <input
-              id="resident-auth-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Digite sua senha"
-              className="w-full pl-10 pr-4 py-2.5 bg-dark-input border border-dark-border rounded-xl text-sm focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all text-white placeholder-zinc-600"
-              required
-            />
-          </div>
-        </div>
-
-        <button
-          id="resident-auth-submit-btn"
-          type="submit"
-          disabled={loading}
-          className="w-full py-3 px-4 mt-2 bg-gold text-black font-semibold rounded-xl text-sm hover:bg-gold-hover transition-all cursor-pointer shadow-lg shadow-gold/15 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none font-display"
-        >
-          {loading ? 'Processando...' : isSignUp ? 'Criar Cadastro' : 'Entrar na Conta'}
-        </button>
-      </form>
-
-      <div className="mt-6 pt-6 border-t border-dark-border flex flex-col items-center gap-3">
-        <button
-          id="resident-auth-toggle-btn"
-          type="button"
-          onClick={() => {
-            setIsSignUp(!isSignUp);
-            setError('');
-          }}
-          className="text-xs font-semibold text-zinc-400 hover:text-gold hover:underline transition-all cursor-pointer font-display"
-        >
-          {isSignUp 
-            ? 'Já possuo cadastro • Fazer Login' 
-            : 'Novo morador? Registre seu apartamento aqui'}
-        </button>
-
-        <div className="flex flex-wrap gap-2 justify-center w-full mt-2">
-          <button
-            id="resident-goto-employee-btn"
-            type="button"
-            onClick={onEmployeeInitiate}
-            className="text-[11px] font-semibold text-blue-400 hover:text-blue-300 hover:underline transition-all cursor-pointer font-display flex items-center gap-1 bg-blue-500/10 px-3 py-1.5 rounded-xl border border-blue-500/10 hover:border-blue-500/20"
-          >
-            <Building size={12} /> Sou Funcionário (Portaria)
-          </button>
-
-          <button
-            id="resident-goto-admin-btn"
-            type="button"
-            onClick={onAdminInitiate}
-            className="text-[11px] font-semibold text-gold hover:text-gold-hover hover:underline transition-all cursor-pointer font-display flex items-center gap-1 bg-gold-light px-3 py-1.5 rounded-xl border border-gold/10 hover:border-gold/20"
-          >
-            <KeyRound size={12} /> Sou Administrador (Síndico)
-          </button>
         </div>
       </div>
     </div>

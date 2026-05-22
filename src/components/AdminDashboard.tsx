@@ -653,9 +653,17 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
           console.warn("Could not store default drive settings:", configErr);
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed Google login:', err);
-      setAuthError('Falha no login com o Google. Certifique-se de selecionar uma conta válida e conceder as permissões.');
+      if (err.code === 'auth/popup-blocked') {
+        setAuthError('O login foi bloqueado pelo seu navegador. Por favor, permita pop-ups para este site e tente novamente.');
+      } else if (err.code === 'auth/cancelled-by-user') {
+        setAuthError('Login cancelado pelo usuário.');
+      } else if (err.code === 'auth/unauthorized-domain') {
+        setAuthError('Este domínio não está autorizado no Firebase. Adicione o domínio da URL atual nas configurações do console do Firebase.');
+      } else {
+        setAuthError(`Erro no login (${err.code || 'erro desconhecido'}): ${err.message || 'Falha ao autenticar com o Google.'}`);
+      }
     } finally {
       setLoggingInToggle(false);
     }

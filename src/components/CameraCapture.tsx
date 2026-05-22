@@ -38,6 +38,13 @@ export default function CameraCapture({ resident, personName, personSubtitle, en
     setIsCapturing(true);
 
     try {
+      // Check if mediaDevices is supported (it requires a secure context: HTTPS or localhost)
+      if (!navigator.mediaDevices) {
+        setPermissionError('O seu navegador não suporta acesso à câmera ou você está acessando por um canal não seguro (requer HTTPS). Tente abrir o aplicativo em uma nova aba.');
+        setIsCapturing(false);
+        return;
+      }
+
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
