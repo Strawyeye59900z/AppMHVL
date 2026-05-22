@@ -1,0 +1,4 @@
+firebase-applet-config.json
+.env.local
+dist
+node_modules
