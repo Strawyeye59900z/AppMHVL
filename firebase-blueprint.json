@@ -1,0 +1,107 @@
+{
+  "entities": {
+    "Resident": {
+      "title": "Resident",
+      "description": "Information about a resident synced block-wide.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "apartment": { "type": "string" },
+        "block": { "type": "string" },
+        "password": { "type": "string" },
+        "phone": { "type": "string" },
+        "photoDataUrl": { "type": "string" },
+        "registeredAt": { "type": "string" },
+        "syncStatus": { "type": "string" },
+        "syncError": { "type": "string" },
+        "driveFileId": { "type": "string" },
+        "deviceRegistered": { "type": "boolean" }
+      },
+      "required": ["id", "name", "apartment", "block", "registeredAt"]
+    },
+    "Reservation": {
+      "title": "Reservation",
+      "description": "Reservation for an amenity.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "apartment": { "type": "string" },
+        "block": { "type": "string" },
+        "residentId": { "type": "string" },
+        "residentName": { "type": "string" },
+        "amenity": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlot": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "apartment", "block", "residentId", "residentName", "amenity", "date", "timeSlot", "createdAt"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Employee/Concierge profile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "password": { "type": "string" },
+        "needsPasswordSet": { "type": "boolean" },
+        "photoDataUrl": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Package": {
+      "title": "Package",
+      "description": "Delivered mail/package log.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "apartment": { "type": "string" },
+        "block": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "description": { "type": "string" },
+        "receivedAt": { "type": "string" },
+        "status": { "type": "string" },
+        "deliveredAt": { "type": "string" },
+        "deliveredTo": { "type": "string" },
+        "receivedBy": { "type": "string" }
+      },
+      "required": ["id", "apartment", "block", "recipientName", "description", "receivedAt", "status"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "General settings and lists.",
+      "type": "object",
+      "properties": {
+        "authorizedAdmins": { "type": "array" },
+        "driveConfig": { "type": "object" },
+        "adminPasswords": { "type": "object" },
+        "conciergePassword": { "type": "string" }
+      },
+      "required": []
+    }
+  },
+  "firestore": {
+    "residents/{id}": {
+      "schema": "Resident",
+      "description": "Collection of all residents"
+    },
+    "reservations/{id}": {
+      "schema": "Reservation",
+      "description": "Collection of all amenity bookings"
+    },
+    "employees/{id}": {
+      "schema": "Employee",
+      "description": "Collection of all security/employee staff"
+    },
+    "packages/{id}": {
+      "schema": "Package",
+      "description": "Collection of incoming courier mail/packages"
+    },
+    "settings/{id}": {
+      "schema": "Settings",
+      "description": "Single-document configuration"
+    }
+  }
+}

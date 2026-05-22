@@ -1,0 +1,6 @@
+{
+  "name": "Heitor Vila Lobos",
+  "description": "Aplicativo para cadastramento de reconhecimento facial de moradores do condomínio Heitor Vila Lobos, com upload organizado no Google Drive.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
