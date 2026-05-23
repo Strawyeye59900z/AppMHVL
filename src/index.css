@@ -9,11 +9,26 @@
   --color-gold: #3b82f6;
   --color-gold-hover: #1d4ed8;
   --color-gold-light: rgba(59, 130, 246, 0.1);
-  --color-dark-bg: #030712;
+  --color-dark-bg: #020617;
   --color-dark-card: #111827;
   --color-dark-input: #1f2937;
   --color-dark-border: #374151;
   --color-dark-hover: #1f2937;
+}
+
+@layer base {
+  html, body {
+    margin: 0;
+    padding: 0;
+    background-color: #020617;
+    color: #E4E4E7;
+    min-height: 100vh;
+  }
+  #root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
 }
 
 /* Authentic Google Material Sign-In Button styles adjusted for dark-theme Sophisticated vibe */
