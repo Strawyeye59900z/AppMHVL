@@ -42,7 +42,9 @@ interface AdminDashboardProps {
 
 export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDashboardProps = {}) {
   const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario' | 'whatsapp' | 'hikvision'>('moradores');
-  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [googleUser, setGoogleUser] = useState<any>(() => {
+    try { return JSON.parse(localStorage.getItem('adminSession') || 'null'); } catch { return null; }
+  });
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [residents, setResidents] = useState<Resident[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -543,7 +545,8 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
       }
 
       // Successful login
-      setGoogleUser(loginData.user); // Store safe local session
+      localStorage.setItem('adminSession', JSON.stringify(loginData.user));
+      setGoogleUser(loginData.user);
       setAuthError('');
     } catch (err: any) {
       setAuthError(err.message || 'Erro de conexão.');
@@ -600,6 +603,7 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
 
       const loginData = await loginRes.json();
       if (loginRes.ok) {
+        localStorage.setItem('adminSession', JSON.stringify(loginData.user));
         setGoogleUser(loginData.user);
       } else {
         setAuthError('Senha cadastrada com sucesso! Faça o login novamente.');
@@ -631,6 +635,7 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
     } catch (err) {
       console.warn("Firebase logout failed:", err);
     }
+    localStorage.removeItem('adminSession');
     setGoogleUser(null);
     setAccessToken(null);
     setAdminEmail('');
