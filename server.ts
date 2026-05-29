@@ -5,18 +5,8 @@
 
 import express from 'express';
 import path from 'path';
-import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, getDocs, collection, deleteDoc } from 'firebase/firestore';
-
-// Ensure the data directories exist
-const DATA_DIR = path.join(process.cwd(), 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-const DB_FILE = path.join(DATA_DIR, 'db.json');
+import PocketBase from 'pocketbase';
 
 // Interface representation on the server
 interface ServerResident {
@@ -25,13 +15,16 @@ interface ServerResident {
   apartment: string;
   block: string;
   password?: string;
-  phone?: string; // Optional resident phone number for WhatsApp alerts
-  photoDataUrl?: string; // stored base64 image data url
+  phone?: string;
+  whatsapp?: string;
+  photoDataUrl?: string;
   registeredAt: string;
   syncStatus: 'pending' | 'synced' | 'failed';
   syncError?: string;
   driveFileId?: string;
   deviceRegistered?: boolean;
+  hikvisionSyncStatus?: Record<string, HikvisionFaceSyncStatus>;
+  firstLogin: boolean;
 }
 
 interface ServerReservation {
@@ -47,30 +40,39 @@ interface ServerReservation {
   createdAt: string;
 }
 
-interface DriveConfig {
-  sharedAccessToken?: string;
-  sharedFolderId?: string;
-  sharedAdminEmail?: string;
-  tokenExpiresAt?: string;
+interface ServerWhatsAppConfig {
+  enabled: boolean;
+  evolutionApiUrl: string;
+  evolutionApiKey: string;
+  instanceName: string;
+  templateText: string;
 }
 
-interface DbSchema {
-  residents: ServerResident[];
-  reservations: ServerReservation[];
-  authorizedAdmins?: string[];
-  driveConfig?: DriveConfig;
-  adminPasswords?: { [email: string]: string };
-  employees?: ServerEmployee[];
-  packages?: ServerPackage[];
-  conciergePassword?: string;
+interface ServerHikvisionDevice {
+  id: string;
+  name: string;
+  deviceIp: string;
+  port: number;
+  username: string;
+  password: string;
+  enabled: boolean;
+  lastSync?: string;
+  syncStatus: 'idle' | 'syncing' | 'error';
+}
+
+interface HikvisionFaceSyncStatus {
+  status: 'synced' | 'pending' | 'failed';
+  syncedAt?: string;
+  error?: string;
 }
 
 interface ServerEmployee {
   id: string;
   name: string;
-  password?: string;
-  needsPasswordSet?: boolean;
-  photoDataUrl?: string; // stored base64 image data url
+  username: string;
+  role?: string;
+  active: boolean;
+  firstLogin: boolean;
 }
 
 interface ServerPackage {
@@ -83,274 +85,222 @@ interface ServerPackage {
   status: 'pending' | 'delivered';
   deliveredAt?: string;
   deliveredTo?: string;
-  receivedBy?: string; // Name of the employee who checked in the package
+  receivedBy?: string;
+  carrier?: string;
+  employeeId?: string;
 }
 
-// Database helper functions
-function readDb(): DbSchema {
+// ---- PocketBase init ----
+
+const POCKETBASE_URL = process.env.POCKETBASE_URL || 'http://127.0.0.1:8090';
+const POCKETBASE_ADMIN_EMAIL = process.env.POCKETBASE_ADMIN_EMAIL || '';
+const POCKETBASE_ADMIN_PASSWORD = process.env.POCKETBASE_ADMIN_PASSWORD || '';
+
+const pbAdmin = new PocketBase(POCKETBASE_URL);
+
+async function initPocketBase() {
   try {
-    if (fs.existsSync(DB_FILE)) {
-      const data = fs.readFileSync(DB_FILE, 'utf-8');
-      const parsed = JSON.parse(data);
-      return {
-        residents: parsed.residents || [],
-        reservations: parsed.reservations || [],
-        authorizedAdmins: parsed.authorizedAdmins || ['gabriel.nunez.costa@gmail.com'],
-        driveConfig: parsed.driveConfig || {},
-        adminPasswords: parsed.adminPasswords || {},
-        employees: (parsed.employees || [{ id: 'emp_1', name: 'Porteiro Principal', password: '1234', needsPasswordSet: false }]).map((e: any) => ({
-          ...e,
-          password: e.password || e.pin // Migrate pin to password if needed
-        })),
-        packages: parsed.packages || []
-      };
-    }
-  } catch (error) {
-    console.error('Error reading database:', error);
+    await pbAdmin.admins.authWithPassword(POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD);
+    console.log('PocketBase admin authenticated successfully.');
+  } catch (err) {
+    console.error('PocketBase admin auth failed:', err);
+    process.exit(1);
   }
-  return { 
-    residents: [], 
-    reservations: [], 
-    authorizedAdmins: ['gabriel.nunez.costa@gmail.com'],
-    driveConfig: {},
-    adminPasswords: {},
-    employees: [{ id: 'emp_1', name: 'Porteiro Principal', password: '1234', needsPasswordSet: false }],
-    packages: []
-  };
 }
 
-// Read firebase configuration
-let firebaseApp: any;
-let firestoreDb: any;
+// ---- PocketBase helpers ----
 
-try {
-  const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(firebaseConfigPath)) {
-    const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf-8'));
-    firebaseApp = initializeApp(firebaseConfig);
-    firestoreDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
-    console.log('Firebase initialized successfully in Express server.');
-  } else {
-    console.warn('Firebase config file missing inside backend. Falling back to local-only mode.');
-  }
-} catch (error) {
-  console.error('Failed to initialize Firebase for backend:', error);
+async function pbResidents() {
+  const records = await pbAdmin.collection('residents').getFullList({ sort: 'apartment' });
+  return records as unknown as ServerResident[];
 }
 
-// Helper to recursively strip undefined fields from objects before saving to Firestore
-function cleanForFirestore(obj: any): any {
-  return JSON.parse(JSON.stringify(obj));
+async function pbEmployees() {
+  const records = await pbAdmin.collection('employees').getFullList({ sort: 'name' });
+  return records as unknown as ServerEmployee[];
 }
 
-// Background sync helper to save database state to Firestore
-async function syncToFirestore(newData: DbSchema, oldData: DbSchema) {
-  if (!firestoreDb) return;
+async function pbReservations() {
+  const records = await pbAdmin.collection('reservations').getFullList({ sort: '-createdAt' });
+  return records as unknown as ServerReservation[];
+}
+
+async function pbPackages() {
+  const records = await pbAdmin.collection('packages').getFullList({ sort: '-receivedAt' });
+  return records as unknown as ServerPackage[];
+}
+
+async function pbSetting(key: string): Promise<any | null> {
   try {
-    // 1. Sync residents
-    const oldResidentsMap = new Map((oldData.residents || []).map(r => [r.id, r]));
-    const newResidentsMap = new Map((newData.residents || []).map(r => [r.id, r]));
+    const record = await pbAdmin.collection('settings').getFirstListItem(`key="${key}"`);
+    return record.value;
+  } catch {
+    return null;
+  }
+}
 
-    for (const oldId of oldResidentsMap.keys()) {
-      if (!newResidentsMap.has(oldId)) {
-        await deleteDoc(doc(firestoreDb, 'residents', oldId));
-      }
+async function pbSetSetting(key: string, value: any): Promise<void> {
+  try {
+    const existing = await pbAdmin.collection('settings').getFirstListItem(`key="${key}"`);
+    await pbAdmin.collection('settings').update(existing.id, { value });
+  } catch {
+    await pbAdmin.collection('settings').create({ key, value });
+  }
+}
+
+// ================= WHATSAPP VIA EVOLUTION API =================
+
+const AMENITY_NAMES_SERVER: Record<string, string> = {
+  quadra: 'Quadra de Esportes',
+  churrasqueira: 'Churrasqueira Coberta',
+  salao: 'Salão de Festas',
+};
+
+function fillWhatsAppTemplate(template: string, resident: ServerResident, reservation: ServerReservation): string {
+  const dateFormatted = new Date(reservation.date + 'T00:00:00').toLocaleDateString('pt-BR', {
+    weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric',
+  });
+  const amenityName = AMENITY_NAMES_SERVER[reservation.amenity] || reservation.amenity;
+  const blockStr = reservation.block && reservation.block !== 'Único' ? ` / Bloco ${reservation.block}` : '';
+
+  return template
+    .replace(/\{morador\}/g, resident.name)
+    .replace(/\{local\}/g, amenityName)
+    .replace(/\{data\}/g, dateFormatted)
+    .replace(/\{hora\}/g, reservation.timeSlot)
+    .replace(/\{apartamento\}/g, reservation.apartment)
+    .replace(/\{bloco\}/g, reservation.block || 'Único')
+    .replace(/\{unidade\}/g, `Apto ${reservation.apartment}${blockStr}`);
+}
+
+async function sendWhatsAppNotification(resident: ServerResident, reservation: ServerReservation, config: ServerWhatsAppConfig): Promise<void> {
+  if (!config.enabled || !resident.phone) return;
+
+  const phone = resident.phone.replace(/\D/g, '');
+  const normalizedPhone = phone.length <= 11 ? '55' + phone : phone;
+  const message = fillWhatsAppTemplate(config.templateText, resident, reservation);
+
+  try {
+    const url = `${config.evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${config.instanceName}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': config.evolutionApiKey },
+      body: JSON.stringify({ number: normalizedPhone, text: message }),
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`WhatsApp send failed (HTTP ${response.status}): ${errText.substring(0, 200)}`);
+    } else {
+      console.log(`WhatsApp notification sent to ${normalizedPhone} for reservation ${reservation.id}`);
     }
+  } catch (err: any) {
+    console.error('WhatsApp notification error:', err.message);
+  }
+}
 
-    for (const [id, r] of newResidentsMap.entries()) {
-      const oldR = oldResidentsMap.get(id);
-      if (!oldR || JSON.stringify(oldR) !== JSON.stringify(r)) {
-        await setDoc(doc(firestoreDb, 'residents', id), cleanForFirestore(r));
-      }
-    }
+// ================= HIKVISION FACE SYNC =================
 
-    // 2. Sync reservations
-    const oldReservationsMap = new Map((oldData.reservations || []).map(r => [r.id, r]));
-    const newReservationsMap = new Map((newData.reservations || []).map(r => [r.id, r]));
+function basicAuthHik(username: string, password: string): string {
+  return 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+}
 
-    for (const oldId of oldReservationsMap.keys()) {
-      if (!newReservationsMap.has(oldId)) {
-        await deleteDoc(doc(firestoreDb, 'reservations', oldId));
-      }
-    }
+async function syncFaceToHikvisionServer(resident: ServerResident, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
+  if (!resident.photoDataUrl) {
+    return { status: 'failed', error: 'Morador sem foto cadastrada' };
+  }
 
-    for (const [id, r] of newReservationsMap.entries()) {
-      const oldR = oldReservationsMap.get(id);
-      if (!oldR || JSON.stringify(oldR) !== JSON.stringify(r)) {
-        await setDoc(doc(firestoreDb, 'reservations', id), cleanForFirestore(r));
-      }
-    }
+  const match = resident.photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) {
+    return { status: 'failed', error: 'Formato de foto inválido' };
+  }
+  const photoBase64 = match[2];
 
-    // 3. Sync employees
-    const oldEmployeesMap = new Map((oldData.employees || []).map(e => [e.id, e]));
-    const newEmployeesMap = new Map((newData.employees || []).map(e => [e.id, e]));
+  const base = `http://${device.deviceIp}:${device.port}`;
+  const authHeader = basicAuthHik(device.username, device.password);
+  const headers = { Authorization: authHeader, 'Content-Type': 'application/json', Accept: 'application/json' };
+  const personId = resident.id.replace(/[^a-zA-Z0-9]/g, '').substring(0, 32);
 
-    for (const oldId of oldEmployeesMap.keys()) {
-      if (!newEmployeesMap.has(oldId)) {
-        await deleteDoc(doc(firestoreDb, 'employees', oldId));
-      }
-    }
-
-    for (const [id, e] of newEmployeesMap.entries()) {
-      const oldE = oldEmployeesMap.get(id);
-      if (!oldE || JSON.stringify(oldE) !== JSON.stringify(e)) {
-        await setDoc(doc(firestoreDb, 'employees', id), cleanForFirestore(e));
-      }
-    }
-
-    // 4. Sync packages
-    const oldPackagesMap = new Map((oldData.packages || []).map(p => [p.id, p]));
-    const newPackagesMap = new Map((newData.packages || []).map(p => [p.id, p]));
-
-    for (const oldId of oldPackagesMap.keys()) {
-      if (!newPackagesMap.has(oldId)) {
-        await deleteDoc(doc(firestoreDb, 'packages', oldId));
-      }
-    }
-
-    for (const [id, p] of newPackagesMap.entries()) {
-      const oldP = oldPackagesMap.get(id);
-      if (!oldP || JSON.stringify(oldP) !== JSON.stringify(p)) {
-        await setDoc(doc(firestoreDb, 'packages', id), cleanForFirestore(p));
-      }
-    }
-
-    // 5. Sync metadata Config
-    const oldConfig = {
-      authorizedAdmins: oldData.authorizedAdmins || [],
-      driveConfig: oldData.driveConfig || {},
-      adminPasswords: oldData.adminPasswords || {},
-      conciergePassword: oldData.conciergePassword ?? null
+  try {
+    // 1. Criar/atualizar pessoa no terminal
+    const personPayload = {
+      UserInfo: {
+        employeeNo: personId,
+        name: resident.name.substring(0, 32),
+        userType: 'normal',
+        Valid: { enable: true, beginTime: '2000-01-01T00:00:00', endTime: '2037-12-31T23:59:59' },
+        localUIRight: false,
+        maxOpenDoorTime: 0,
+        openDoorTime: 5,
+        roomNumber: resident.apartment,
+        floorNumber: 0,
+      },
     };
 
-    const newConfig = {
-      authorizedAdmins: newData.authorizedAdmins || [],
-      driveConfig: newData.driveConfig || {},
-      adminPasswords: newData.adminPasswords || {},
-      conciergePassword: newData.conciergePassword ?? null
+    const personRes = await fetch(`${base}/ISAPI/AccessControl/UserInfo/Record?format=json`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(personPayload),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!personRes.ok) {
+      const errText = await personRes.text();
+      if (!errText.includes('"statusCode": 6') && !errText.includes('"statusCode":6')) {
+        return { status: 'failed', error: `Erro ao criar pessoa HTTP ${personRes.status}` };
+      }
+    }
+
+    // 2. Enviar foto para reconhecimento facial
+    const facePayload = {
+      FaceInfo: {
+        employeeNo: personId,
+        faceLibType: 'blackFD',
+        faceURL: '',
+        faceData: photoBase64,
+      },
     };
 
-    if (JSON.stringify(oldConfig) !== JSON.stringify(newConfig)) {
-      await setDoc(doc(firestoreDb, 'settings', 'main'), cleanForFirestore(newConfig));
+    const faceRes = await fetch(`${base}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(facePayload),
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!faceRes.ok) {
+      const errText = await faceRes.text();
+      return { status: 'failed', error: `Erro foto HTTP ${faceRes.status}: ${errText.substring(0, 100)}` };
     }
-  } catch (error) {
-    console.error('Error in background Firestore sync:', error);
+
+    return { status: 'synced', syncedAt: new Date().toISOString() };
+  } catch (err: any) {
+    const errMsg = err.name === 'TimeoutError' ? 'Timeout na sincronização' : (err.message || 'Erro desconhecido');
+    return { status: 'failed', error: errMsg };
   }
 }
 
-// Fetch all database records from Firestore to cache locally on startup
-async function fetchFromFirestore(): Promise<DbSchema> {
-  const dbSchema: DbSchema = {
-    residents: [],
-    reservations: [],
-    authorizedAdmins: ['gabriel.nunez.costa@gmail.com'],
-    driveConfig: {},
-    adminPasswords: {},
-    employees: [],
-    packages: []
-  };
+async function syncResidentToAllHikvisionDevices(residentId: string): Promise<void> {
+  const devices = ((await pbSetting('hikvision_devices')) || []).filter((d: ServerHikvisionDevice) => d.enabled);
+  if (devices.length === 0) return;
 
-  if (!firestoreDb) return dbSchema;
+  const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident;
+  if (!resident || !resident.photoDataUrl) return;
 
-  try {
-    console.log('Fetching database files from decentralized Firestore...');
-    
-    const residentsSnap = await getDocs(collection(firestoreDb, 'residents'));
-    residentsSnap.forEach((d) => {
-      dbSchema.residents.push(d.data() as ServerResident);
-    });
-
-    const reservationsSnap = await getDocs(collection(firestoreDb, 'reservations'));
-    reservationsSnap.forEach((d) => {
-      dbSchema.reservations.push(d.data() as ServerReservation);
-    });
-
-    const employeesSnap = await getDocs(collection(firestoreDb, 'employees'));
-    employeesSnap.forEach((d) => {
-      dbSchema.employees!.push(d.data() as ServerEmployee);
-    });
-
-    const packagesSnap = await getDocs(collection(firestoreDb, 'packages'));
-    packagesSnap.forEach((d) => {
-      dbSchema.packages!.push(d.data() as ServerPackage);
-    });
-
-    const configSnap = await getDoc(doc(firestoreDb, 'settings', 'main'));
-    if (configSnap.exists()) {
-      const data = configSnap.data();
-      dbSchema.authorizedAdmins = data.authorizedAdmins || ['gabriel.nunez.costa@gmail.com'];
-      dbSchema.driveConfig = data.driveConfig || {};
-      dbSchema.adminPasswords = data.adminPasswords || {};
-      dbSchema.conciergePassword = data.conciergePassword;
-    }
-    
-    console.log(`Firestore fetching complete successfully. Residents: ${dbSchema.residents.length}, Reservations: ${dbSchema.reservations.length}, Employees: ${dbSchema.employees?.length}, Packages: ${dbSchema.packages?.length}`);
-  } catch (error) {
-    console.error('Error downloading from Firestore database:', error);
+  const hikvisionSyncStatus: Record<string, HikvisionFaceSyncStatus> = resident.hikvisionSyncStatus || {};
+  for (const device of devices) {
+    const result = await syncFaceToHikvisionServer(resident, device);
+    hikvisionSyncStatus[device.id] = result;
+    console.log(`Hikvision sync [${device.name}] resident ${resident.name}: ${result.status}`);
   }
-
-  if (!dbSchema.employees || dbSchema.employees.length === 0) {
-    dbSchema.employees = [{ id: 'emp_1', name: 'Porteiro Principal', password: '1234', needsPasswordSet: false }];
-  }
-
-  return dbSchema;
-}
-
-// Ensure database states are bidirectionally consistent
-async function initializeDatabase() {
-  if (!firestoreDb) return;
-  console.log('Checking database status...');
-  const localDb = readDb();
-  const firestoreDbData = await fetchFromFirestore();
-
-  const isFirestoreEmpty = 
-    firestoreDbData.residents.length === 0 && 
-    firestoreDbData.reservations.length === 0 && 
-    (firestoreDbData.employees || []).length <= 1 &&
-    (firestoreDbData.packages || []).length === 0;
-
-  const isLocalNotEmpty = 
-    localDb.residents.length > 0 || 
-    localDb.reservations.length > 0 || 
-    (localDb.employees || []).length > 1 || 
-    (localDb.packages || []).length > 0;
-
-  if (isFirestoreEmpty && isLocalNotEmpty) {
-    console.log('Local db has data but Firestore is empty. Mirroring current local db to Firestore persistent storage...');
-    await syncToFirestore(localDb, {
-      residents: [],
-      reservations: [],
-      authorizedAdmins: [],
-      driveConfig: {},
-      adminPasswords: {},
-      employees: [],
-      packages: []
-    });
-    console.log('Mirroring state to Firestore completed successfully.');
-  } else {
-    console.log('Writing Firestore database records to local db.json cache...');
-    fs.writeFileSync(DB_FILE, JSON.stringify(firestoreDbData, null, 2), 'utf-8');
-    console.log('Local db.json sync completed.');
-  }
-}
-
-function writeDb(data: DbSchema) {
-  try {
-    const oldData = readDb();
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
-    syncToFirestore(data, oldData).catch((err) => {
-      console.error('Failed background sync to Firestore:', err);
-    });
-  } catch (error) {
-    console.error('Error writing database:', error);
-  }
+  await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus });
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Await the Firestore synchronization so that the server local cache is populated before serving routes
-  await initializeDatabase();
+  // Authenticate with PocketBase before serving any routes
+  await initPocketBase();
 
   // Support up to 5MB payloads to handle base64 face captures comfortably
   app.use(express.json({ limit: '5mb' }));
@@ -364,806 +314,802 @@ async function startServer() {
   });
 
   // Get all residents (excluding passwords)
-  app.get('/api/residents', (req, res) => {
-    const db = readDb();
-    const publicResidents = db.residents.map(({ password, ...rest }) => rest);
-    res.json(publicResidents);
+  app.get('/api/residents', async (req, res) => {
+    try {
+      const residents = await pbResidents();
+      const publicResidents = residents.map(({ password, ...rest }) => rest);
+      res.json(publicResidents);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Resident Login
-  app.post('/api/residents/login', (req, res) => {
+  app.post('/api/residents/login', async (req, res) => {
     const { apartment, password } = req.body;
     const block = req.body.block || 'Único';
-    
     if (!apartment || !password) {
       return res.status(400).json({ error: 'Todos os campos são obrigatórios!' });
     }
-
-    const db = readDb();
-    // Find primary resident with password
-    const resident = db.residents.find(
-      r => r.apartment.toLowerCase() === apartment.trim().toLowerCase() && 
-           r.block.toLowerCase() === block.trim().toLowerCase() &&
-           r.password
-    );
-
-    if (!resident) {
-      return res.status(404).json({ 
-        error: 'Apartamento não cadastrado. Crie um cadastro primeiro.',
-        needsSignup: true 
-      });
+    try {
+      const resident = await pbAdmin.collection('residents').getFirstListItem(
+        `apartment="${apartment.trim()}" && block="${block.trim()}"`
+      ) as unknown as ServerResident;
+      if (!resident) {
+        return res.status(404).json({ error: 'Apartamento não cadastrado.', needsSignup: true });
+      }
+      // PocketBase auth collections store hashed passwords — use authWithPassword
+      try {
+        await pbAdmin.collection('residents').authWithPassword(apartment.trim(), password);
+      } catch {
+        return res.status(401).json({ error: 'Senha incorreta.' });
+      }
+      const { password: _, ...safeResident } = resident as any;
+      res.json(safeResident);
+    } catch (err: any) {
+      res.status(404).json({ error: 'Apartamento não cadastrado.', needsSignup: true });
     }
-
-    if (resident.password !== password) {
-      return res.status(401).json({ error: 'Senha incorreta.' });
-    }
-
-    // Return resident info (no password)
-    const { password: _, ...safeResident } = resident;
-    res.json(safeResident);
   });
 
   // Resident Signup
-  app.post('/api/residents/signup', (req, res) => {
+  app.post('/api/residents/signup', async (req, res) => {
     const { name, apartment, password, phone } = req.body;
     const block = req.body.block || 'Único';
-
     if (!name || !apartment || !password) {
       return res.status(400).json({ error: 'Todos os campos são obrigatórios!' });
     }
-
-    const db = readDb();
-    
-    // Check if the apartment already has a login registered
-    const exists = db.residents.some(
-      r => r.apartment.toLowerCase() === apartment.trim().toLowerCase() && 
-           r.block.toLowerCase() === block.trim().toLowerCase() &&
-           r.password
-    );
-
-    if (exists) {
-      return res.status(400).json({ error: 'Este apartamento já possui um cadastro ativo.' });
+    try {
+      const existing = await pbAdmin.collection('residents').getFirstListItem(
+        `apartment="${apartment.trim()}" && block="${block.trim()}"`
+      ).catch(() => null);
+      if (existing) {
+        return res.status(400).json({ error: 'Este apartamento já possui um cadastro ativo.' });
+      }
+      const created = await pbAdmin.collection('residents').create({
+        username: apartment.trim(),
+        password,
+        passwordConfirm: password,
+        name: name.trim(),
+        apartment: apartment.trim(),
+        block: block.trim(),
+        phone: phone ? phone.trim() : '',
+        registeredAt: new Date().toISOString(),
+        syncStatus: 'pending',
+        firstLogin: false,
+      });
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const newResident: ServerResident = {
-      id: 'res_' + Math.random().toString(36).substring(2, 11),
-      name: name.trim(),
-      apartment: apartment.trim(),
-      block: block.trim(),
-      password: password,
-      phone: phone ? phone.trim() : undefined,
-      registeredAt: new Date().toISOString(),
-      syncStatus: 'pending'
-    };
-
-    db.residents.push(newResident);
-    writeDb(db);
-
-    const { password: _, ...safeResident } = newResident;
-    res.status(201).json(safeResident);
   });
 
   // Get all family members of an apartment
-  app.get('/api/residents/apartment-members', (req, res) => {
+  app.get('/api/residents/apartment-members', async (req, res) => {
     const { apartment } = req.query;
     const block = (req.query.block as string) || 'Único';
-    
-    if (!apartment) {
-      return res.status(400).json({ error: 'Apartamento é obrigatório.' });
+    if (!apartment) return res.status(400).json({ error: 'Apartamento é obrigatório.' });
+    try {
+      const members = await pbAdmin.collection('residents').getFullList({
+        filter: `apartment="${(apartment as string).trim()}" && block="${block.trim()}"`,
+      });
+      res.json(members);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    
-    const db = readDb();
-    const members = db.residents.filter(
-      r => r.apartment.toLowerCase() === (apartment as string).trim().toLowerCase() && 
-           r.block.toLowerCase() === block.trim().toLowerCase()
-    );
-    
-    res.json(members);
   });
 
   // Add a family member to an apartment
-  app.post('/api/residents/add-member', (req, res) => {
+  app.post('/api/residents/add-member', async (req, res) => {
     const { name, apartment } = req.body;
     const block = req.body.block || 'Único';
-
-    if (!name || !apartment) {
-      return res.status(400).json({ error: 'Nome e apartamento são obrigatórios.' });
+    if (!name || !apartment) return res.status(400).json({ error: 'Nome e apartamento são obrigatórios.' });
+    try {
+      const exists = await pbAdmin.collection('residents').getFirstListItem(
+        `apartment="${apartment.trim()}" && block="${block.trim()}" && name="${name.trim()}"`
+      ).catch(() => null);
+      if (exists) return res.status(400).json({ error: 'Este familiar já está cadastrado neste apartamento.' });
+      const memberPassword = Math.random().toString(36).slice(2) + 'Aa1!';
+      const newMember = await pbAdmin.collection('residents').create({
+        username: apartment.trim() + '_' + Date.now(),
+        password: memberPassword,
+        passwordConfirm: memberPassword,
+        name: name.trim(),
+        apartment: apartment.trim(),
+        block: block.trim(),
+        registeredAt: new Date().toISOString(),
+        syncStatus: 'pending',
+        firstLogin: false,
+      });
+      res.status(201).json(newMember);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const db = readDb();
-    
-    // Check if name is already registered under this apartment
-    const exists = db.residents.some(
-      r => r.apartment.toLowerCase() === apartment.trim().toLowerCase() && 
-           r.block.toLowerCase() === block.trim().toLowerCase() &&
-           r.name.toLowerCase() === name.trim().toLowerCase()
-    );
-
-    if (exists) {
-      return res.status(400).json({ error: 'Este familiar já está cadastrado neste apartamento.' });
-    }
-
-    const newMember: ServerResident = {
-      id: 'res_' + Math.random().toString(36).substring(2, 11),
-      name: name.trim(),
-      apartment: apartment.trim(),
-      block: block.trim(),
-      registeredAt: new Date().toISOString(),
-      syncStatus: 'pending'
-    };
-
-    db.residents.push(newMember);
-    writeDb(db);
-
-    res.status(201).json(newMember);
   });
 
   // Upload or update facial photo
-  app.post('/api/residents/upload-face', (req, res) => {
+  app.post('/api/residents/upload-face', async (req, res) => {
     const { id, photoDataUrl } = req.body;
-
-    if (!id || !photoDataUrl) {
-      return res.status(400).json({ error: 'ID do morador e dados da foto são obrigatórios.' });
-    }
-
-    // Verify image size (max 1MB).
-    // Base64 length is roughly 4/3 of binary size.
-    // 1MB is 1,048,576 bytes. Base64 length limit roughly 1,398,101 characters.
+    if (!id || !photoDataUrl) return res.status(400).json({ error: 'ID do morador e dados da foto são obrigatórios.' });
     const approximateSizeInBytes = (photoDataUrl.length * 3) / 4;
-    if (approximateSizeInBytes > 1024 * 1024) {
-      return res.status(400).json({ error: 'A imagem excede o tamanho limite de 1MB.' });
+    if (approximateSizeInBytes > 1024 * 1024) return res.status(400).json({ error: 'A imagem excede o tamanho limite de 1MB.' });
+    try {
+      const residents = await pbResidents();
+      const resident = residents.find(r => r.id === id);
+      if (!resident) return res.status(404).json({ error: 'Morador não encontrado.' });
+      const enabledDevices = ((await pbSetting('hikvision_devices')) || []).filter((d: any) => d.enabled);
+      const hikvisionSyncStatus: Record<string, any> = resident.hikvisionSyncStatus || {};
+      for (const device of enabledDevices) {
+        hikvisionSyncStatus[device.id] = { status: 'pending' };
+      }
+      const updated = await pbAdmin.collection('residents').update(id, {
+        photoDataUrl,
+        syncStatus: 'pending',
+        deviceRegistered: false,
+        hikvisionSyncStatus,
+      });
+      res.json(updated);
+      if (enabledDevices.length > 0) {
+        syncResidentToAllHikvisionDevices(id).catch(err => console.error('Hikvision background sync error:', err));
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const db = readDb();
-    const residentIndex = db.residents.findIndex(r => r.id === id);
-
-    if (residentIndex === -1) {
-      return res.status(404).json({ error: 'Morador não encontrado.' });
-    }
-
-    db.residents[residentIndex].photoDataUrl = photoDataUrl;
-    db.residents[residentIndex].syncStatus = 'pending'; // Needs sync since photo updated
-    db.residents[residentIndex].deviceRegistered = false; // Reset device registration for manual update
-    delete db.residents[residentIndex].syncError;
-
-    writeDb(db);
-
-    const { password, ...safeResident } = db.residents[residentIndex];
-    res.json(safeResident);
   });
 
   // Get photo of a resident
-  app.get('/api/residents/photo/:id', (req, res) => {
-    const db = readDb();
-    const resident = db.residents.find(r => r.id === req.params.id);
-
-    if (!resident || !resident.photoDataUrl) {
-      return res.status(404).send('Photo not found');
+  app.get('/api/residents/photo/:id', async (req, res) => {
+    try {
+      const resident = await pbAdmin.collection('residents').getOne(req.params.id) as unknown as ServerResident;
+      if (!resident || !resident.photoDataUrl) return res.status(404).send('Photo not found');
+      const matches = resident.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) return res.status(400).send('Invalid photo format');
+      res.contentType(matches[1]);
+      res.send(Buffer.from(matches[2], 'base64'));
+    } catch {
+      res.status(404).send('Photo not found');
     }
-
-    // Photo is stored as base64 data URL: data:image/jpeg;base64,...
-    const matches = resident.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (!matches || matches.length !== 3) {
-      return res.status(400).send('Invalid photo format');
-    }
-
-    const contentType = matches[1];
-    const buffer = Buffer.from(matches[2], 'base64');
-
-    res.contentType(contentType);
-    res.send(buffer);
   });
 
   // Update sync status on the server
-  app.post('/api/residents/update-sync', (req, res) => {
+  app.post('/api/residents/update-sync', async (req, res) => {
     const { id, syncStatus, driveFileId, syncError } = req.body;
-
-    if (!id || !syncStatus) {
-      return res.status(400).json({ error: 'ID e status de sincronização são obrigatórios.' });
+    if (!id || !syncStatus) return res.status(400).json({ error: 'ID e status são obrigatórios.' });
+    try {
+      const updateData: any = { syncStatus };
+      if (driveFileId) updateData.driveFileId = driveFileId;
+      if (syncError) updateData.syncError = syncError; else updateData.syncError = '';
+      await pbAdmin.collection('residents').update(id, updateData);
+      res.json({ message: 'Status atualizado com sucesso.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const db = readDb();
-    const residentIndex = db.residents.findIndex(r => r.id === id);
-
-    if (residentIndex === -1) {
-      return res.status(404).json({ error: 'Morador não encontrado.' });
-    }
-
-    db.residents[residentIndex].syncStatus = syncStatus;
-    if (driveFileId) db.residents[residentIndex].driveFileId = driveFileId;
-    if (syncError) db.residents[residentIndex].syncError = syncError;
-    else delete db.residents[residentIndex].syncError;
-
-    writeDb(db);
-    res.json({ message: 'Status de sincronização atualizado com sucesso.' });
   });
 
   // Update physical device registration status
-  app.post('/api/residents/update-device-registered', (req, res) => {
+  app.post('/api/residents/update-device-registered', async (req, res) => {
     const { id, deviceRegistered } = req.body;
-
-    if (!id) {
-      return res.status(400).json({ error: 'ID do morador é obrigatório.' });
+    if (!id) return res.status(400).json({ error: 'ID do morador é obrigatório.' });
+    try {
+      await pbAdmin.collection('residents').update(id, { deviceRegistered: !!deviceRegistered });
+      res.json({ message: 'Status atualizado com sucesso.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const db = readDb();
-    const residentIndex = db.residents.findIndex(r => r.id === id);
-
-    if (residentIndex === -1) {
-      return res.status(404).json({ error: 'Morador não encontrado.' });
-    }
-
-    db.residents[residentIndex].deviceRegistered = !!deviceRegistered;
-
-    writeDb(db);
-    res.json({ message: 'Status de cadastro do dispositivo atualizado com sucesso.' });
   });
 
-  // Delete resident (Requires admin check or credentials, client will request)
-  app.post('/api/residents/delete', (req, res) => {
+  // Delete resident
+  app.post('/api/residents/delete', async (req, res) => {
     const { id } = req.body;
-    if (!id) {
-      return res.status(400).json({ error: 'ID do morador é obrigatório.' });
+    if (!id) return res.status(400).json({ error: 'ID do morador é obrigatório.' });
+    try {
+      await pbAdmin.collection('residents').delete(id);
+      res.json({ success: true, message: 'Morador removido com sucesso.' });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Morador não encontrado.' });
     }
-
-    const db = readDb();
-    const index = db.residents.findIndex(r => r.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Morador não encontrado.' });
-    }
-
-    db.residents.splice(index, 1);
-    writeDb(db);
-    res.json({ success: true, message: 'Morador removido com sucesso.' });
   });
 
   // ================= RESERVATION ENDPOINTS =================
 
   // Get all reservations
-  app.get('/api/reservations', (req, res) => {
-    const db = readDb();
-    res.json(db.reservations || []);
+  app.get('/api/reservations', async (req, res) => {
+    try {
+      res.json(await pbReservations());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Create a new reservation with collision validation
-  app.post('/api/reservations', (req, res) => {
+  app.post('/api/reservations', async (req, res) => {
     const { apartment, residentId, residentName, amenity, date, timeSlot, notes } = req.body;
     const block = req.body.block || 'Único';
-
     if (!apartment || !residentId || !residentName || !amenity || !date || !timeSlot) {
       return res.status(400).json({ error: 'Todos os campos de reserva são obrigatórios.' });
     }
-
-    const db = readDb();
-
-    // 1. Validate advance booking (max 3 months) and prevent past dates
-    const todayStr = new Date().toISOString().split('T')[0];
-    if (date < todayStr) {
-      return res.status(400).json({ error: 'Não é possível reservar datas passadas.' });
-    }
-
-    const maxLimitDate = new Date();
-    maxLimitDate.setMonth(maxLimitDate.getMonth() + 3);
-    const maxLimitStr = maxLimitDate.toISOString().split('T')[0];
-    if (date > maxLimitStr) {
-      return res.status(400).json({ error: 'Instrução: As reservas só podem ser feitas com no máximo 3 meses de antecedência.' });
-    }
-
-    // 2. Limit squad court (quadra) to maximum 4 periods per day per apartment
-    if (amenity === 'quadra' && residentId !== 'admin') {
-      const apartmentReservationsCount = db.reservations.filter(
-        r => r.amenity === 'quadra' &&
-             r.date === date &&
-             r.apartment.toLowerCase() === apartment.trim().toLowerCase() &&
-             (r.block || 'Único').toLowerCase() === block.trim().toLowerCase()
-      ).length;
-
-      if (apartmentReservationsCount >= 4) {
-        return res.status(400).json({ error: 'A reserva da quadra é limitada a no máximo 4 períodos por dia por apartamento.' });
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      if (date < todayStr) return res.status(400).json({ error: 'Não é possível reservar datas passadas.' });
+      const maxLimitDate = new Date();
+      maxLimitDate.setMonth(maxLimitDate.getMonth() + 3);
+      if (date > maxLimitDate.toISOString().split('T')[0]) {
+        return res.status(400).json({ error: 'As reservas só podem ser feitas com no máximo 3 meses de antecedência.' });
       }
+      const reservations = await pbReservations();
+      if (amenity === 'quadra' && residentId !== 'admin') {
+        const count = reservations.filter(r =>
+          r.amenity === 'quadra' && r.date === date &&
+          r.apartment.toLowerCase() === apartment.trim().toLowerCase() &&
+          (r.block || 'Único').toLowerCase() === block.trim().toLowerCase()
+        ).length;
+        if (count >= 4) return res.status(400).json({ error: 'Reserva da quadra limitada a 4 períodos por dia por apartamento.' });
+      }
+      const isBooked = reservations.some(r => r.amenity === amenity && r.date === date && r.timeSlot === timeSlot);
+      if (isBooked) return res.status(400).json({ error: 'Este horário já está reservado por outro morador.' });
+      const newReservation = await pbAdmin.collection('reservations').create({
+        apartment: apartment.trim(), block: block.trim(), residentId, residentName: residentName.trim(),
+        amenity, date, timeSlot, notes: notes ? notes.trim() : '', createdAt: new Date().toISOString(),
+      });
+      // WhatsApp notification
+      const whatsappConfig = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
+      if (whatsappConfig?.enabled && residentId !== 'admin') {
+        const residents = await pbResidents();
+        const resident = residents.find(r => r.id === residentId);
+        if (resident?.phone) {
+          sendWhatsAppNotification(resident, newReservation as unknown as ServerReservation, whatsappConfig).catch(err =>
+            console.error('WhatsApp notification error:', err)
+          );
+        }
+      }
+      res.status(201).json(newReservation);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    // Check availability collision
-    const isBooked = db.reservations.some(
-      r => r.amenity === amenity && 
-           r.date === date && 
-           r.timeSlot === timeSlot
-    );
-
-    if (isBooked) {
-      return res.status(400).json({ error: 'Este horário já está reservado por outro morador.' });
-    }
-
-    const newReservation: ServerReservation = {
-      id: 'rev_' + Math.random().toString(36).substring(2, 11),
-      apartment: apartment.trim(),
-      block: block.trim(),
-      residentId,
-      residentName: residentName.trim(),
-      amenity,
-      date,
-      timeSlot,
-      notes: notes ? notes.trim() : '',
-      createdAt: new Date().toISOString()
-    };
-
-    db.reservations.push(newReservation);
-    writeDb(db);
-
-    res.status(201).json(newReservation);
   });
 
-  // Cancel/Delete reservation with authorization check (Admin or specific apartment)
-  app.post('/api/reservations/delete', (req, res) => {
+  // Cancel/Delete reservation with authorization check
+  app.post('/api/reservations/delete', async (req, res) => {
     const { id, requesterApartment, requesterBlock, isAdmin } = req.body;
-
-    if (!id) {
-      return res.status(400).json({ error: 'ID da reserva é obrigatório.' });
+    if (!id) return res.status(400).json({ error: 'ID da reserva é obrigatório.' });
+    try {
+      const resv = await pbAdmin.collection('reservations').getOne(id) as unknown as ServerReservation;
+      const isAuthorized = isAdmin || (requesterApartment &&
+        resv.apartment.toLowerCase() === requesterApartment.trim().toLowerCase() &&
+        (resv.block || 'Único').toLowerCase() === (requesterBlock || 'Único').trim().toLowerCase());
+      if (!isAuthorized) return res.status(403).json({ error: 'Acesso negado.' });
+      await pbAdmin.collection('reservations').delete(id);
+      res.json({ success: true, message: 'Reserva cancelada com sucesso.' });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Reserva não encontrada.' });
     }
-
-    const db = readDb();
-    const index = db.reservations.findIndex(r => r.id === id);
-
-    if (index === -1) {
-      return res.status(404).json({ error: 'Reserva não encontrada.' });
-    }
-
-    const resv = db.reservations[index];
-
-    // Check if requester is authorized (is admin or matches the original apartment and block)
-    const isAuthorized = isAdmin || (
-      requesterApartment && 
-      resv.apartment.toLowerCase() === requesterApartment.trim().toLowerCase() &&
-      (resv.block || 'Único').toLowerCase() === (requesterBlock || 'Único').trim().toLowerCase()
-    );
-
-    if (!isAuthorized) {
-      return res.status(403).json({ error: 'Acesso negado: Você não tem permissão para cancelar esta reserva.' });
-    }
-
-    db.reservations.splice(index, 1);
-    writeDb(db);
-
-    res.json({ success: true, message: 'Reserva cancelada com sucesso.' });
   });
 
   // Edit/Update reservation with authorization check
-  app.post('/api/reservations/update', (req, res) => {
+  app.post('/api/reservations/update', async (req, res) => {
     const { id, notes, requesterApartment, requesterBlock, isAdmin } = req.body;
-
-    if (!id) {
-      return res.status(400).json({ error: 'ID da reserva é obrigatório.' });
+    if (!id) return res.status(400).json({ error: 'ID da reserva é obrigatório.' });
+    try {
+      const resv = await pbAdmin.collection('reservations').getOne(id) as unknown as ServerReservation;
+      const isAuthorized = isAdmin || (requesterApartment &&
+        resv.apartment.toLowerCase() === requesterApartment.trim().toLowerCase() &&
+        (resv.block || 'Único').toLowerCase() === (requesterBlock || 'Único').trim().toLowerCase());
+      if (!isAuthorized) return res.status(403).json({ error: 'Acesso negado.' });
+      const updated = await pbAdmin.collection('reservations').update(id, { notes: notes ? notes.trim() : '' });
+      res.json({ success: true, reservation: updated });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Reserva não encontrada.' });
     }
-
-    const db = readDb();
-    const index = db.reservations.findIndex(r => r.id === id);
-
-    if (index === -1) {
-      return res.status(404).json({ error: 'Reserva não encontrada.' });
-    }
-
-    const resv = db.reservations[index];
-
-    // Check authorization
-    const isAuthorized = isAdmin || (
-      requesterApartment && 
-      resv.apartment.toLowerCase() === requesterApartment.trim().toLowerCase() &&
-      (resv.block || 'Único').toLowerCase() === (requesterBlock || 'Único').trim().toLowerCase()
-    );
-
-    if (!isAuthorized) {
-      return res.status(403).json({ error: 'Acesso negado: Você não tem permissão para editar esta reserva.' });
-    }
-
-    resv.notes = notes ? notes.trim() : '';
-    writeDb(db);
-
-    res.json({ success: true, reservation: resv });
   });
 
   // ================= ADMIN & DRIVE SETTINGS =================
 
   // Get dynamic admin email list
-  app.get('/api/admins', (req, res) => {
-    const db = readDb();
-    res.json(db.authorizedAdmins || ['gabriel.nunez.costa@gmail.com']);
+  app.get('/api/admins', async (req, res) => {
+    try {
+      const admins = await pbSetting('authorized_admins') || ['gabriel.nunez.costa@gmail.com'];
+      res.json(admins);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Add dynamic admin email
-  app.post('/api/admins/add', (req, res) => {
+  app.post('/api/admins/add', async (req, res) => {
     const { email } = req.body;
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ error: 'E-mail de administrador inválido.' });
-    }
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'E-mail inválido.' });
     const cleanEmail = email.toLowerCase().trim();
-    const db = readDb();
-    if (!db.authorizedAdmins) {
-      db.authorizedAdmins = ['gabriel.nunez.costa@gmail.com'];
+    try {
+      const admins: string[] = await pbSetting('authorized_admins') || ['gabriel.nunez.costa@gmail.com'];
+      if (admins.includes(cleanEmail)) return res.status(400).json({ error: 'E-mail já possui acesso.' });
+      admins.push(cleanEmail);
+      await pbSetSetting('authorized_admins', admins);
+      res.json({ success: true, authorizedAdmins: admins });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    if (db.authorizedAdmins.includes(cleanEmail)) {
-      return res.status(400).json({ error: 'Este e-mail já possui acesso de administrador.' });
-    }
-    db.authorizedAdmins.push(cleanEmail);
-    writeDb(db);
-    res.json({ success: true, authorizedAdmins: db.authorizedAdmins });
   });
 
   // Delete dynamic admin email
-  app.post('/api/admins/delete', (req, res) => {
+  app.post('/api/admins/delete', async (req, res) => {
     const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'E-mail é obrigatório.' });
-    }
+    if (!email) return res.status(400).json({ error: 'E-mail é obrigatório.' });
     const cleanEmail = email.toLowerCase().trim();
     if (cleanEmail === 'gabriel.nunez.costa@gmail.com') {
       return res.status(400).json({ error: 'Não é possível remover o administrador principal.' });
     }
-    const db = readDb();
-    if (!db.authorizedAdmins) {
-      db.authorizedAdmins = ['gabriel.nunez.costa@gmail.com'];
+    try {
+      const admins: string[] = await pbSetting('authorized_admins') || [];
+      const index = admins.indexOf(cleanEmail);
+      if (index === -1) return res.status(404).json({ error: 'Administrador não encontrado.' });
+      admins.splice(index, 1);
+      await pbSetSetting('authorized_admins', admins);
+      res.json({ success: true, authorizedAdmins: admins });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const index = db.authorizedAdmins.indexOf(cleanEmail);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Administrador não encontrado.' });
-    }
-    db.authorizedAdmins.splice(index, 1);
-    writeDb(db);
-    res.json({ success: true, authorizedAdmins: db.authorizedAdmins });
   });
 
   // Get default shared Drive configurations
-  app.get('/api/drive-config', (req, res) => {
-    const db = readDb();
-    res.json(db.driveConfig || {});
+  app.get('/api/drive-config', async (req, res) => {
+    try {
+      res.json(await pbSetting('drive_config') || {});
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Store default shared Drive configurations
-  app.post('/api/drive-config', (req, res) => {
+  app.post('/api/drive-config', async (req, res) => {
     const { accessToken, folderId, email, expiresAt } = req.body;
-    const db = readDb();
-    db.driveConfig = {
-      sharedAccessToken: accessToken || '',
-      sharedFolderId: folderId || '',
-      sharedAdminEmail: email || '',
-      tokenExpiresAt: expiresAt || ''
-    };
-    writeDb(db);
-    res.json({ success: true, driveConfig: db.driveConfig });
+    try {
+      await pbSetSetting('drive_config', {
+        sharedAccessToken: accessToken || '',
+        sharedFolderId: folderId || '',
+        sharedAdminEmail: email || '',
+        tokenExpiresAt: expiresAt || '',
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ================= ADMIN CREDENTIALS & EMPLOYEES =================
 
   // Check admin email status
-  app.post('/api/admins/check-status', (req, res) => {
+  app.post('/api/admins/check-status', async (req, res) => {
     const { email } = req.body;
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ error: 'E-mail de administrador inválido.' });
-    }
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'E-mail inválido.' });
     const cleanEmail = email.toLowerCase().trim();
-    const db = readDb();
-    
-    // Check if authorized
-    const isAuthorized = (db.authorizedAdmins || []).includes(cleanEmail);
-    if (!isAuthorized) {
-      return res.json({ authorized: false, error: 'Acesso Negado: Este e-mail não possui privilégios de administrador.' });
+    try {
+      const admins: string[] = await pbSetting('authorized_admins') || [];
+      if (!admins.includes(cleanEmail)) return res.json({ authorized: false, error: 'E-mail não possui privilégios de administrador.' });
+      const passwords: Record<string, string> = await pbSetting('admin_passwords') || {};
+      res.json({ authorized: true, needsSetup: !passwords[cleanEmail] });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const hasPassword = !!(db.adminPasswords && db.adminPasswords[cleanEmail]);
-    res.json({ authorized: true, needsSetup: !hasPassword });
   });
 
   // Setup admin first-access password
-  app.post('/api/admins/setup-password', (req, res) => {
+  app.post('/api/admins/setup-password', async (req, res) => {
     const { email, password } = req.body;
-    if (!email || !password || password.length < 4) {
-      return res.status(400).json({ error: 'E-mail e senha (mínimo de 4 caracteres) são obrigatórios.' });
-    }
+    if (!email || !password || password.length < 4) return res.status(400).json({ error: 'E-mail e senha (mínimo 4 caracteres) são obrigatórios.' });
     const cleanEmail = email.toLowerCase().trim();
-    const db = readDb();
-
-    // Verify permission
-    const isAuthorized = (db.authorizedAdmins || []).includes(cleanEmail);
-    if (!isAuthorized) {
-      return res.status(403).json({ error: 'E-mail não está cadastrado na lista de administradores autorizados.' });
+    try {
+      const admins: string[] = await pbSetting('authorized_admins') || [];
+      if (!admins.includes(cleanEmail)) return res.status(403).json({ error: 'E-mail não autorizado.' });
+      const passwords: Record<string, string> = await pbSetting('admin_passwords') || {};
+      passwords[cleanEmail] = password;
+      await pbSetSetting('admin_passwords', passwords);
+      res.json({ success: true, message: 'Senha cadastrada com sucesso!' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    if (!db.adminPasswords) {
-      db.adminPasswords = {};
-    }
-
-    // Set password
-    db.adminPasswords[cleanEmail] = password;
-    writeDb(db);
-
-    res.json({ success: true, message: 'Senha cadastrada com sucesso!' });
   });
 
   // Local Admin Login
-  app.post('/api/admins/login', (req, res) => {
+  app.post('/api/admins/login', async (req, res) => {
     const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
-    }
+    if (!email || !password) return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
     const cleanEmail = email.toLowerCase().trim();
-    const db = readDb();
-
-    const isAuthorized = (db.authorizedAdmins || []).includes(cleanEmail);
-    if (!isAuthorized) {
-      return res.status(403).json({ error: 'E-mail não cadastrado como administrador.' });
+    try {
+      const admins: string[] = await pbSetting('authorized_admins') || [];
+      if (!admins.includes(cleanEmail)) return res.status(403).json({ error: 'E-mail não cadastrado como administrador.' });
+      const passwords: Record<string, string> = await pbSetting('admin_passwords') || {};
+      if (!passwords[cleanEmail] || passwords[cleanEmail] !== password) return res.status(401).json({ error: 'Senha incorreta.' });
+      res.json({ success: true, user: { email: cleanEmail, displayName: cleanEmail.split('@')[0], isLocalAdmin: true } });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const storedPassword = db.adminPasswords && db.adminPasswords[cleanEmail];
-    if (!storedPassword || storedPassword !== password) {
-      return res.status(401).json({ error: 'Senha incorreta.' });
-    }
-
-    res.json({
-      success: true,
-      user: {
-        email: cleanEmail,
-        displayName: cleanEmail.split('@')[0],
-        isLocalAdmin: true
-      }
-    });
   });
 
   // Employee Login
-  app.post('/api/employees/login', (req, res) => {
+  app.post('/api/employees/login', async (req, res) => {
     const { employeeId, password } = req.body;
-    
-    if (!employeeId || !password) {
-      return res.status(400).json({ error: 'Funcionário e senha são obrigatórios.' });
-    }
-
-    const db = readDb();
-    const employee = db.employees?.find(e => e.id === employeeId);
-    
-    if (!employee) {
-      return res.status(404).json({ error: 'Funcionário não encontrado.' });
-    }
-
-    // Check if employee needs setup
-    if (employee.needsPasswordSet || !employee.password) {
-      return res.status(403).json({ 
-        error: 'Este é seu primeiro acesso. Sua senha será definida agora.',
-        needsSetup: true 
-      });
-    }
-
-    if (employee.password !== password) {
-      return res.status(401).json({ error: 'Senha incorreta.' });
-    }
-
-    res.json({
-      success: true,
-      employee: {
-        id: employee.id,
-        name: employee.name
+    if (!employeeId || !password) return res.status(400).json({ error: 'Funcionário e senha são obrigatórios.' });
+    try {
+      const employee = await pbAdmin.collection('employees').getOne(employeeId) as unknown as ServerEmployee;
+      if (!employee) return res.status(404).json({ error: 'Funcionário não encontrado.' });
+      if (employee.firstLogin) {
+        return res.status(403).json({ error: 'Este é seu primeiro acesso. Sua senha será definida agora.', needsSetup: true });
       }
-    });
+      try {
+        await pbAdmin.collection('employees').authWithPassword(employee.username, password);
+      } catch {
+        return res.status(401).json({ error: 'Senha incorreta.' });
+      }
+      res.json({ success: true, employee: { id: employee.id, name: employee.name } });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Funcionário não encontrado.' });
+    }
   });
 
   // Update Shared Concierge Password (Admin)
-  app.post('/api/concierge/password', (req, res) => {
+  app.post('/api/concierge/password', async (req, res) => {
     const { password } = req.body;
-    if (!password) {
-      return res.status(400).json({ error: 'Senha é obrigatória.' });
+    if (!password) return res.status(400).json({ error: 'Senha é obrigatória.' });
+    try {
+      await pbSetSetting('concierge_password', password);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const db = readDb();
-    db.conciergePassword = password;
-    writeDb(db);
-    res.json({ success: true });
   });
 
-  // Check employee status (mirror admin check-status)
-  app.post('/api/employees/check-status', (req, res) => {
+  // Check employee status
+  app.post('/api/employees/check-status', async (req, res) => {
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'ID é obrigatório.' });
-
-    const db = readDb();
-    const employee = db.employees?.find(e => e.id === id);
-
-    if (!employee) {
-      return res.status(404).json({ error: 'Funcionário não encontrado.' });
+    try {
+      const employee = await pbAdmin.collection('employees').getOne(id) as unknown as ServerEmployee;
+      res.json({ authorized: true, needsSetup: employee.firstLogin });
+    } catch {
+      res.status(404).json({ error: 'Funcionário não encontrado.' });
     }
-
-    const hasPassword = !!employee.password;
-    res.json({ authorized: true, needsSetup: !hasPassword || employee.needsPasswordSet });
   });
 
   // Setup employee password
-  app.post('/api/employees/setup-password', (req, res) => {
+  app.post('/api/employees/setup-password', async (req, res) => {
     const { employeeId, password } = req.body;
-    if (!employeeId || !password) {
-      return res.status(400).json({ error: 'ID e Senha são obrigatórios.' });
+    if (!employeeId || !password) return res.status(400).json({ error: 'ID e Senha são obrigatórios.' });
+    try {
+      await pbAdmin.collection('employees').update(employeeId, { password, passwordConfirm: password, firstLogin: false });
+      res.json({ success: true, message: 'Senha definida com sucesso!' });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Funcionário não encontrado.' });
     }
-
-    const db = readDb();
-    const employee = db.employees?.find(e => e.id === employeeId);
-    if (!employee) {
-      return res.status(404).json({ error: 'Funcionário não encontrado.' });
-    }
-
-    employee.password = password;
-    employee.needsPasswordSet = false;
-    writeDb(db);
-
-    res.json({ success: true, message: 'Senha definida com sucesso!' });
   });
 
-  // Get all employees (for selecting who received packages and admin view)
-  app.get('/api/employees', (req, res) => {
-    const db = readDb();
-    res.json(db.employees || []);
+  // Get all employees
+  app.get('/api/employees', async (req, res) => {
+    try {
+      res.json(await pbEmployees());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Create standard employee (called by Admins)
-  app.post('/api/employees', (req, res) => {
+  app.post('/api/employees', async (req, res) => {
     const { name } = req.body;
-    if (!name) {
-      return res.status(400).json({ error: 'Nome é obrigatório.' });
+    if (!name) return res.status(400).json({ error: 'Nome é obrigatório.' });
+    try {
+      const tempPassword = Math.random().toString(36).slice(2, 10) + 'Aa1!';
+      const newEmployee = await pbAdmin.collection('employees').create({
+        username: name.trim(),
+        password: tempPassword,
+        passwordConfirm: tempPassword,
+        name: name.trim(),
+        role: 'porteiro',
+        active: true,
+        firstLogin: true,
+      });
+      res.status(201).json(newEmployee);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const db = readDb();
-    if (!db.employees) db.employees = [];
-
-    const newEmployee: ServerEmployee = {
-      id: 'emp_' + Math.random().toString(36).substring(2, 11),
-      name: name.trim(),
-      needsPasswordSet: true
-    };
-
-    db.employees.push(newEmployee);
-    writeDb(db);
-
-    res.status(201).json(newEmployee);
-  });
-
-  // Upload employee photo
-  app.post('/api/employees/upload-photo', (req, res) => {
-    const { id, photoDataUrl } = req.body;
-
-    if (!id || !photoDataUrl) {
-      return res.status(400).json({ error: 'ID e foto são obrigatórios.' });
-    }
-
-    const db = readDb();
-    const empIndex = db.employees?.findIndex(e => e.id === id);
-
-    if (empIndex === undefined || empIndex === -1) {
-      return res.status(404).json({ error: 'Funcionário não encontrado.' });
-    }
-
-    db.employees![empIndex].photoDataUrl = photoDataUrl;
-    writeDb(db);
-
-    res.json({ success: true, employee: db.employees![empIndex] });
   });
 
   // Reset employee password (called by Admin)
-  app.post('/api/employees/reset-password', (req, res) => {
+  app.post('/api/employees/reset-password', async (req, res) => {
     const { id } = req.body;
-
-    if (!id) {
-      return res.status(400).json({ error: 'ID é obrigatório.' });
+    if (!id) return res.status(400).json({ error: 'ID é obrigatório.' });
+    try {
+      const tempPassword = Math.random().toString(36).slice(2, 10) + 'Aa1!';
+      await pbAdmin.collection('employees').update(id, { password: tempPassword, passwordConfirm: tempPassword, firstLogin: true });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Funcionário não encontrado.' });
     }
-
-    const db = readDb();
-    const empIndex = db.employees?.findIndex(e => e.id === id);
-
-    if (empIndex === undefined || empIndex === -1) {
-      return res.status(404).json({ error: 'Funcionário não encontrado.' });
-    }
-
-    // Reset password and flag for setup
-    db.employees![empIndex].password = undefined;
-    db.employees![empIndex].needsPasswordSet = true;
-    writeDb(db);
-
-    res.json({ success: true });
   });
 
   // Get photo of an employee
-  app.get('/api/employees/photo/:id', (req, res) => {
-    const db = readDb();
-    const employee = db.employees?.find(e => e.id === req.params.id);
-
-    if (!employee || !employee.photoDataUrl) {
-      return res.status(404).send('Photo not found');
+  app.get('/api/employees/photo/:id', async (req, res) => {
+    try {
+      const employee = await pbAdmin.collection('employees').getOne(req.params.id) as any;
+      if (!employee?.photoDataUrl) return res.status(404).send('Photo not found');
+      const matches = employee.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) return res.status(400).send('Invalid photo format');
+      res.contentType(matches[1]);
+      res.send(Buffer.from(matches[2], 'base64'));
+    } catch {
+      res.status(404).send('Photo not found');
     }
-
-    const matches = employee.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (!matches || matches.length !== 3) {
-      return res.status(400).send('Invalid photo format');
-    }
-
-    const contentType = matches[1];
-    const buffer = Buffer.from(matches[2], 'base64');
-
-    res.contentType(contentType);
-    res.send(buffer);
   });
 
   // Delete employee (called by Admins)
-  app.post('/api/employees/delete', (req, res) => {
+  app.post('/api/employees/delete', async (req, res) => {
     const { id } = req.body;
-    if (!id) {
-      return res.status(400).json({ error: 'ID do funcionário é obrigatório.' });
+    if (!id) return res.status(400).json({ error: 'ID do funcionário é obrigatório.' });
+    try {
+      const all = await pbEmployees();
+      if (all.length <= 1) return res.status(400).json({ error: 'Não é possível remover o único funcionário.' });
+      const removed = all.find(e => e.id === id);
+      if (!removed) return res.status(404).json({ error: 'Funcionário não encontrado.' });
+      await pbAdmin.collection('employees').delete(id);
+      res.json({ success: true, removed });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const db = readDb();
-    if (!db.employees) db.employees = [];
-
-    const index = db.employees.findIndex(e => e.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Funcionário não encontrado.' });
-    }
-
-    // Don't allow deleting the last employee to prevent lockout
-    if (db.employees.length <= 1) {
-      return res.status(400).json({ error: 'Não é possível remover o único funcionário cadastrado.' });
-    }
-
-    const removed = db.employees.splice(index, 1)[0];
-    writeDb(db);
-
-    res.json({ success: true, removed });
   });
 
+  // Upload employee photo
+  app.post('/api/employees/upload-photo', async (req, res) => {
+    const { id, photoDataUrl } = req.body;
+    if (!id || !photoDataUrl) return res.status(400).json({ error: 'ID e foto são obrigatórios.' });
+    try {
+      const updated = await pbAdmin.collection('employees').update(id, { photoDataUrl });
+      res.json({ success: true, employee: updated });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Funcionário não encontrado.' });
+    }
+  });
+
+  // ================= PACKAGE ENDPOINTS =================
+
   // Get packages
-  app.get('/api/packages', (req, res) => {
-    const db = readDb();
-    res.json(db.packages || []);
+  app.get('/api/packages', async (req, res) => {
+    try {
+      res.json(await pbPackages());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Add package (by Employee)
-  app.post('/api/packages/add', (req, res) => {
-    const { apartment, block, recipientName, description, receivedBy } = req.body;
-    if (!apartment || !description) {
-      return res.status(400).json({ error: 'Apartamento e descrição da encomenda são obrigatórios.' });
+  app.post('/api/packages/add', async (req, res) => {
+    const { apartment, block, recipientName, description, receivedBy, employeeId } = req.body;
+    if (!apartment || !description) return res.status(400).json({ error: 'Apartamento e descrição são obrigatórios.' });
+    try {
+      const newPackage = await pbAdmin.collection('packages').create({
+        apartment: apartment.trim(),
+        block: block ? block.trim() : 'Único',
+        recipientName: recipientName ? recipientName.trim() : 'Qualquer Morador',
+        description: description.trim(),
+        receivedAt: new Date().toISOString(),
+        status: 'pending',
+        receivedBy: receivedBy ? receivedBy.trim() : 'Porteiro Principal',
+        employeeId: employeeId || '',
+      });
+      res.status(201).json(newPackage);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-
-    const db = readDb();
-    const newPackage: ServerPackage = {
-      id: 'pkg_' + Math.random().toString(36).substring(2, 11),
-      apartment: apartment.trim(),
-      block: block ? block.trim() : 'Único',
-      recipientName: recipientName ? recipientName.trim() : 'Qualquer Morador',
-      description: description.trim(),
-      receivedAt: new Date().toISOString(),
-      status: 'pending',
-      receivedBy: receivedBy ? receivedBy.trim() : 'Porteiro Principal'
-    };
-
-    if (!db.packages) {
-      db.packages = [];
-    }
-
-    db.packages.push(newPackage);
-    writeDb(db);
-    res.status(201).json(newPackage);
   });
 
   // Deliver package (Mark as delivered)
-  app.post('/api/packages/deliver', (req, res) => {
+  app.post('/api/packages/deliver', async (req, res) => {
     const { id, deliveredTo } = req.body;
-    if (!id) {
-      return res.status(400).json({ error: 'ID da encomenda é obrigatório.' });
+    if (!id) return res.status(400).json({ error: 'ID da encomenda é obrigatório.' });
+    try {
+      const updated = await pbAdmin.collection('packages').update(id, {
+        status: 'delivered',
+        deliveredAt: new Date().toISOString(),
+        deliveredTo: deliveredTo ? deliveredTo.trim() : 'Morador do apartamento',
+      });
+      res.json({ success: true, package: updated });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Encomenda não encontrada.' });
+    }
+  });
+
+  // ================= WHATSAPP CONFIG ENDPOINTS =================
+
+  app.get('/api/whatsapp/config', async (req, res) => {
+    try {
+      const cfg = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
+      if (!cfg) return res.json(null);
+      const { evolutionApiKey, ...safe } = cfg;
+      res.json({ ...safe, evolutionApiKey: evolutionApiKey ? '***configured***' : '' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/whatsapp/config', async (req, res) => {
+    const { enabled, evolutionApiUrl, evolutionApiKey, instanceName, templateText } = req.body;
+    if (!evolutionApiUrl || !instanceName) return res.status(400).json({ error: 'URL da API e nome da instância são obrigatórios.' });
+    try {
+      const existing = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
+      await pbSetSetting('whatsapp_config', {
+        enabled: !!enabled,
+        evolutionApiUrl: evolutionApiUrl.trim(),
+        evolutionApiKey: evolutionApiKey === '***configured***' ? (existing?.evolutionApiKey || '') : (evolutionApiKey || '').trim(),
+        instanceName: instanceName.trim(),
+        templateText: templateText || '🏠 *Reserva Confirmada!*\n\nOlá, {morador}! Sua reserva no *{local}* foi confirmada.\n\n📅 *Data:* {data}\n⏰ *Horário:* {hora}\n🏢 *Unidade:* {unidade}',
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/whatsapp/test', async (req, res) => {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Número de telefone é obrigatório.' });
+
+    const cfg = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
+    if (!cfg?.evolutionApiUrl || !cfg?.instanceName) {
+      return res.status(400).json({ error: 'WhatsApp não configurado.' });
     }
 
-    const db = readDb();
-    if (!db.packages) db.packages = [];
-    const index = db.packages.findIndex(p => p.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: 'Encomenda não encontrada.' });
+    const normalizedPhone = phone.replace(/\D/g, '');
+    const phoneWithCountry = normalizedPhone.length <= 11 ? '55' + normalizedPhone : normalizedPhone;
+    const testMessage = '✅ *Teste de Notificação*\n\nSeu WhatsApp está configurado corretamente no sistema do condomínio!';
+
+    try {
+      const url = `${cfg.evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${cfg.instanceName}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': cfg.evolutionApiKey },
+        body: JSON.stringify({ number: phoneWithCountry, text: testMessage }),
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        return res.status(400).json({ error: `Evolution API respondeu com erro ${response.status}: ${errText.substring(0, 200)}` });
+      }
+      res.json({ success: true, message: 'Mensagem de teste enviada!' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Falha ao enviar mensagem de teste.' });
+    }
+  });
+
+  // ================= HIKVISION ENDPOINTS =================
+
+  app.get('/api/hikvision/devices', async (req, res) => {
+    try {
+      const devices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      res.json(devices.map(d => { const { password, ...safe } = d; return { ...safe, password: password ? '***configured***' : '' }; }));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/hikvision/devices', async (req, res) => {
+    const { name, deviceIp, port, username, password, enabled } = req.body;
+    if (!name || !deviceIp || !username || !password) return res.status(400).json({ error: 'Nome, IP, usuário e senha são obrigatórios.' });
+    try {
+      const devices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const newDevice: ServerHikvisionDevice = {
+        id: 'hik_' + Math.random().toString(36).substring(2, 11),
+        name: name.trim(), deviceIp: deviceIp.trim(), port: Number(port) || 80,
+        username: username.trim(), password: password.trim(),
+        enabled: enabled !== false, syncStatus: 'idle',
+      };
+      devices.push(newDevice);
+      await pbSetSetting('hikvision_devices', devices);
+      const { password: _, ...safe } = newDevice;
+      res.status(201).json({ ...safe, password: '***configured***' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/hikvision/devices/:id', async (req, res) => {
+    const { name, deviceIp, port, username, password, enabled } = req.body;
+    try {
+      const devices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const idx = devices.findIndex(d => d.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ error: 'Dispositivo não encontrado.' });
+      const existing = devices[idx];
+      devices[idx] = {
+        ...existing,
+        name: name ? name.trim() : existing.name,
+        deviceIp: deviceIp ? deviceIp.trim() : existing.deviceIp,
+        port: port !== undefined ? Number(port) : existing.port,
+        username: username ? username.trim() : existing.username,
+        password: password && password !== '***configured***' ? password.trim() : existing.password,
+        enabled: enabled !== undefined ? !!enabled : existing.enabled,
+      };
+      await pbSetSetting('hikvision_devices', devices);
+      const { password: _, ...safe } = devices[idx];
+      res.json({ ...safe, password: '***configured***' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/hikvision/devices/:id/delete', async (req, res) => {
+    try {
+      const devices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const idx = devices.findIndex(d => d.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ error: 'Dispositivo não encontrado.' });
+      devices.splice(idx, 1);
+      await pbSetSetting('hikvision_devices', devices);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/hikvision/test-connection', async (req, res) => {
+    const { deviceIp, port, username, password } = req.body;
+    if (!deviceIp || !username || !password) {
+      return res.status(400).json({ error: 'IP, usuário e senha são obrigatórios.' });
     }
 
-    db.packages[index].status = 'delivered';
-    db.packages[index].deliveredAt = new Date().toISOString();
-    db.packages[index].deliveredTo = deliveredTo ? deliveredTo.trim() : 'Morador do apartamento';
+    const url = `http://${deviceIp.trim()}:${Number(port) || 80}/ISAPI/System/deviceInfo`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: basicAuthHik(username, password), Accept: 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
 
-    writeDb(db);
-    res.json({ success: true, package: db.packages[index] });
+      if (response.status === 401) return res.status(401).json({ error: 'Credenciais inválidas (401)' });
+      if (!response.ok) return res.status(400).json({ error: `Erro HTTP ${response.status}` });
+
+      const text = await response.text();
+      const modelMatch = text.match(/<deviceName>([^<]+)<\/deviceName>/);
+      const serialMatch = text.match(/<serialNumber>([^<]+)<\/serialNumber>/);
+      res.json({
+        success: true,
+        deviceName: modelMatch?.[1] || 'Dispositivo Hikvision',
+        serialNumber: serialMatch?.[1] || 'N/A',
+      });
+    } catch (err: any) {
+      const msg = err.name === 'TimeoutError' ? 'Timeout: dispositivo não respondeu em 8s' : (err.message || 'Falha de conexão');
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  app.post('/api/hikvision/sync', async (req, res) => {
+    const { residentId, deviceId } = req.body;
+    if (!residentId) return res.status(400).json({ error: 'ID do morador é obrigatório.' });
+    try {
+      const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident;
+      if (!resident) return res.status(404).json({ error: 'Morador não encontrado.' });
+      if (!resident.photoDataUrl) return res.status(400).json({ error: 'Morador não possui foto.' });
+      const allDevices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const devices = deviceId ? allDevices.filter(d => d.id === deviceId) : allDevices.filter(d => d.enabled);
+      if (devices.length === 0) return res.status(400).json({ error: 'Nenhum dispositivo habilitado.' });
+      const results: Record<string, HikvisionFaceSyncStatus> = {};
+      for (const device of devices) {
+        results[device.id] = await syncFaceToHikvisionServer(resident, device);
+      }
+      const existing = resident.hikvisionSyncStatus || {};
+      await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus: { ...existing, ...results } });
+      res.json({ success: true, results });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/hikvision/sync-status', async (req, res) => {
+    try {
+      const devices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const residents = await pbResidents();
+      res.json({
+        devices: devices.map(d => ({ id: d.id, name: d.name, enabled: d.enabled })),
+        residents: residents.map(r => ({
+          id: r.id, name: r.name, apartment: r.apartment, block: r.block,
+          hasPhoto: !!r.photoDataUrl, hikvisionSyncStatus: r.hikvisionSyncStatus || {},
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ================= VITE OR STATIC SERVING =================

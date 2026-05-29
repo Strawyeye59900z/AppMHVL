@@ -12,7 +12,7 @@ interface ResidentStatusProps {
   resident: Resident;
   onLogout: () => void;
   onCaptureRequest: (member: Resident) => void;
-  initialTab?: 'me' | 'family';
+  initialTab?: 'me' | 'family' | 'packages';
 }
 
 export default function ResidentStatus({ resident, onLogout, onCaptureRequest, initialTab = 'me' }: ResidentStatusProps) {

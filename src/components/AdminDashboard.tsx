@@ -27,10 +27,12 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { Resident, SyncProgress } from '../types';
-import { googleSignIn, logout } from '../firebase';
+import { logout } from '../pocketbase';
 import { findOrCreateFolder, uploadResidentPhoto, deleteDriveFile } from '../driveService';
 import ReservationSection from './ReservationSection';
 import ReservationCalendar from './ReservationCalendar';
+import WhatsAppPanel from './WhatsAppPanel';
+import HikvisionPanel from './HikvisionPanel';
 import { Reservation } from '../types';
 
 interface AdminDashboardProps {
@@ -39,7 +41,7 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDashboardProps = {}) {
-  const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario'>('moradores');
+  const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario' | 'whatsapp' | 'hikvision'>('moradores');
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [residents, setResidents] = useState<Resident[]>([]);
@@ -614,56 +616,7 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
     setAuthError('');
     setLoggingInToggle(true);
     try {
-      const result = await googleSignIn();
-      if (result) {
-        const email = result.user.email?.toLowerCase().trim();
-        
-        // Google Sign in is strictly limited to Project Coordinator
-        if (email !== 'gabriel.nunez.costa@gmail.com') {
-          await logout();
-          setGoogleUser(null);
-          setAccessToken(null);
-          setAuthError(`Acesso com Google permitido apenas para o Coordenador (gabriel.nunez.costa@gmail.com). Para outros administradores, acesse usando E-mail e Senha.`);
-          setLoggingInToggle(false);
-          return;
-        }
-
-        setGoogleUser(result.user);
-        setAccessToken(result.accessToken);
-        setAuthError('');
-        
-        // Try to store this access token as the standard/global Drive config for 1 hour duration
-        try {
-          const expires = new Date();
-          expires.setHours(expires.getHours() + 1);
-          await fetch('/api/drive-config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              accessToken: result.accessToken,
-              email: email,
-              expiresAt: expires.toISOString()
-            })
-          });
-          setSharedDriveInfo({
-            email: email,
-            expiresAt: expires.toISOString()
-          });
-        } catch (configErr) {
-          console.warn("Could not store default drive settings:", configErr);
-        }
-      }
-    } catch (err: any) {
-      console.error('Failed Google login:', err);
-      if (err.code === 'auth/popup-blocked') {
-        setAuthError('O login foi bloqueado pelo seu navegador. Por favor, permita pop-ups para este site e tente novamente.');
-      } else if (err.code === 'auth/cancelled-by-user') {
-        setAuthError('Login cancelado pelo usuário.');
-      } else if (err.code === 'auth/unauthorized-domain') {
-        setAuthError('Este domínio não está autorizado no Firebase. Adicione o domínio da URL atual nas configurações do console do Firebase.');
-      } else {
-        setAuthError(`Erro no login (${err.code || 'erro desconhecido'}): ${err.message || 'Falha ao autenticar com o Google.'}`);
-      }
+      // Google Sign-In removed — use email/password login above
     } finally {
       setLoggingInToggle(false);
     }
@@ -1048,7 +1001,7 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
                 </div>
               </button>
               <p className="text-[9px] text-zinc-500 font-sans tracking-wide text-center mt-3 leading-relaxed">
-                * O acesso através do botão Google é restrito unicamente ao e-mail do coordenador do projeto.
+                * O acesso Google é restrito ao coordenador do projeto. Se o botão Google não funcionar, use o login por <strong className="text-zinc-400">E-mail e Senha</strong> acima — inclusive para o e-mail do coordenador.
               </p>
             </div>
 
@@ -1142,30 +1095,42 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
       </div>
 
       {/* TABS SELECTOR FOR ADMIN */}
-      <div className="flex bg-dark-input rounded-xl p-1 gap-1 border border-dark-border max-w-lg select-none">
+      <div className="flex flex-wrap bg-dark-input rounded-xl p-1 gap-1 border border-dark-border select-none">
         <button
           onClick={() => setAdminSubTab('moradores')}
-          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer ${adminSubTab === 'moradores' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'moradores' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
         >
-          Moradores e Sinc
+          Moradores
         </button>
         <button
           onClick={() => setAdminSubTab('reservas')}
-          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer ${adminSubTab === 'reservas' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'reservas' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
         >
-          Gestão de Reservas
+          Reservas
         </button>
         <button
           onClick={() => setAdminSubTab('funcionarios')}
-          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer ${adminSubTab === 'funcionarios' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'funcionarios' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
         >
           Funcionários
         </button>
         <button
           onClick={() => setAdminSubTab('calendario')}
-          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer ${adminSubTab === 'calendario' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'calendario' ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-zinc-400 hover:text-white'}`}
         >
-          Calendário Reservas
+          Calendário
+        </button>
+        <button
+          onClick={() => setAdminSubTab('whatsapp')}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'whatsapp' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30' : 'text-zinc-400 hover:text-white'}`}
+        >
+          💬 WhatsApp
+        </button>
+        <button
+          onClick={() => setAdminSubTab('hikvision')}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'hikvision' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30' : 'text-zinc-400 hover:text-white'}`}
+        >
+          📷 Hikvision
         </button>
       </div>
 
@@ -1781,6 +1746,14 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
 
       {adminSubTab === 'calendario' && (
         <ReservationCalendar reservations={reservations} />
+      )}
+
+      {adminSubTab === 'whatsapp' && (
+        <WhatsAppPanel />
+      )}
+
+      {adminSubTab === 'hikvision' && (
+        <HikvisionPanel />
       )}
 
       {/* CUSTOM DELETE CONFIRMATION MODAL OVERLAY */}

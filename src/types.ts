@@ -1,21 +1,25 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 export interface Resident {
   id: string;
   name: string;
   apartment: string;
   block: string;
-  password?: string;
-  phone?: string; // Optional resident phone number for WhatsApp alerts
-  photoDataUrl?: string; // Captured photo (base64 string)
+  phone?: string;
+  whatsapp?: string;
+  photoDataUrl?: string;
   registeredAt: string;
   syncStatus: 'pending' | 'synced' | 'failed';
   syncError?: string;
-  driveFileId?: string;
-  deviceRegistered?: boolean; // Whether registered manually on the physical device
+  deviceRegistered?: boolean;
+  hikvisionSyncStatus?: Record<string, HikvisionFaceSyncStatus>;
+  firstLogin: boolean;
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+  role?: string;
+  active: boolean;
+  firstLogin: boolean;
 }
 
 export interface SyncProgress {
@@ -25,10 +29,6 @@ export interface SyncProgress {
   error?: string;
 }
 
-export interface DriveFolderMap {
-  [folderName: string]: string; // folderName (e.g. "Apto 101") -> google drive folder id
-}
-
 export interface Reservation {
   id: string;
   apartment: string;
@@ -36,8 +36,49 @@ export interface Reservation {
   residentId: string;
   residentName: string;
   amenity: 'quadra' | 'churrasqueira' | 'salao';
-  date: string; // YYYY-MM-DD
-  timeSlot: string; // e.g. "09:00 - 15:00"
+  date: string;
+  timeSlot: string;
   notes?: string;
   createdAt: string;
+}
+
+export interface Package {
+  id: string;
+  apartment: string;
+  block: string;
+  recipientName: string;
+  description: string;
+  carrier?: string;
+  receivedAt: string;
+  status: 'pending' | 'delivered';
+  deliveredAt?: string;
+  deliveredTo?: string;
+  employeeId?: string;
+  receivedBy?: string;
+}
+
+export interface WhatsAppConfig {
+  enabled: boolean;
+  evolutionApiUrl: string;
+  evolutionApiKey: string;
+  instanceName: string;
+  templateText: string;
+}
+
+export interface HikvisionDevice {
+  id: string;
+  name: string;
+  deviceIp: string;
+  port: number;
+  username: string;
+  password: string;
+  enabled: boolean;
+  lastSync?: string;
+  syncStatus: 'idle' | 'syncing' | 'error';
+}
+
+export interface HikvisionFaceSyncStatus {
+  status: 'synced' | 'pending' | 'failed';
+  syncedAt?: string;
+  error?: string;
 }
