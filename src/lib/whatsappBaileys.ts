@@ -41,6 +41,7 @@ class WhatsAppBaileys extends EventEmitter {
       },
       printQRInTerminal: false,
       browser: ['AppMHVL', 'Chrome', '1.0.0'],
+      qrTimeout: 60000,
     });
 
     this.sock.ev.on('creds.update', saveCreds);
