@@ -8,6 +8,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import PocketBase from 'pocketbase';
 import { waClient } from './src/lib/whatsappBaileys';
+import DigestFetch from 'digest-fetch';
 
 // Interface representation on the server
 interface ServerResident {
@@ -192,6 +193,10 @@ function basicAuthHik(username: string, password: string): string {
   return 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
 }
 
+function hikFetch(username: string, password: string) {
+  return new DigestFetch(username, password, { algorithm: 'MD5' });
+}
+
 async function syncFaceToHikvisionServer(resident: ServerResident, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
   if (!resident.photoDataUrl) {
     return { status: 'failed', error: 'Morador sem foto cadastrada' };
@@ -204,8 +209,8 @@ async function syncFaceToHikvisionServer(resident: ServerResident, device: Serve
   const photoBase64 = match[2];
 
   const base = `http://${device.deviceIp}:${device.port}`;
-  const authHeader = basicAuthHik(device.username, device.password);
-  const headers = { Authorization: authHeader, 'Content-Type': 'application/json', Accept: 'application/json' };
+  const client = hikFetch(device.username, device.password);
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const personId = resident.id.replace(/[^a-zA-Z0-9]/g, '').substring(0, 32);
 
   try {
@@ -224,7 +229,7 @@ async function syncFaceToHikvisionServer(resident: ServerResident, device: Serve
       },
     };
 
-    const personRes = await fetch(`${base}/ISAPI/AccessControl/UserInfo/Record?format=json`, {
+    const personRes = await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Record?format=json`, {
       method: 'POST',
       headers,
       body: JSON.stringify(personPayload),
@@ -248,7 +253,7 @@ async function syncFaceToHikvisionServer(resident: ServerResident, device: Serve
       },
     };
 
-    const faceRes = await fetch(`${base}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`, {
+    const faceRes = await client.fetch(`${base}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`, {
       method: 'POST',
       headers,
       body: JSON.stringify(facePayload),
@@ -1061,9 +1066,10 @@ async function startServer() {
 
     const url = `http://${deviceIp.trim()}:${Number(port) || 80}/ISAPI/System/deviceInfo`;
     try {
-      const response = await fetch(url, {
+      const client = hikFetch(username, password);
+      const response = await client.fetch(url, {
         method: 'GET',
-        headers: { Authorization: basicAuthHik(username, password), Accept: 'application/json' },
+        headers: { Accept: 'application/xml' },
         signal: AbortSignal.timeout(8000),
       });
 
