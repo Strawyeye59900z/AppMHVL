@@ -9,6 +9,7 @@ import { Boom } from '@hapi/boom';
 import * as path from 'path';
 import * as fs from 'fs';
 import { EventEmitter } from 'events';
+import qrcodeTerminal from 'qrcode-terminal';
 
 const AUTH_DIR = path.resolve(process.cwd(), 'baileys_auth');
 
@@ -39,7 +40,7 @@ class WhatsAppBaileys extends EventEmitter {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, undefined as any),
       },
-      printQRInTerminal: true,
+      printQRInTerminal: false,
       browser: ['AppMHVL', 'Chrome', '1.0.0'],
       qrTimeout: 60000,
     });
@@ -52,6 +53,8 @@ class WhatsAppBaileys extends EventEmitter {
         this.status = 'qr';
         this.emit('qr', qr);
         this.emit('status', this.status);
+        console.log('\n[WhatsApp] Escaneie o QR Code abaixo com o WhatsApp (Aparelhos Conectados → Conectar um aparelho):\n');
+        qrcodeTerminal.generate(qr, { small: true }, (qrText: string) => console.log(qrText));
       }
 
       if (connection === 'open') {
