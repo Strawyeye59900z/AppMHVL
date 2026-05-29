@@ -17,7 +17,16 @@ import EmployeePanel from './components/EmployeePanel';
 import BottomNav from './components/BottomNav';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'resident' | 'admin' | 'employee'>('resident');
+  const [activeTab, setActiveTabRaw] = useState<'resident' | 'admin' | 'employee'>(() => {
+    const saved = localStorage.getItem('activeTab');
+    if (saved === 'admin' && localStorage.getItem('adminSession')) return 'admin';
+    return 'resident';
+  });
+  const setActiveTab = (tab: 'resident' | 'admin' | 'employee') => {
+    if (tab === 'resident') localStorage.removeItem('activeTab');
+    else localStorage.setItem('activeTab', tab);
+    setActiveTabRaw(tab);
+  };
   const [residentView, setResidentView] = useState<'inicio' | 'reservar' | 'encomendas' | 'family'>('inicio');
   const [loggedInResident, setLoggedInResident] = useState<Resident | null>(null);
   const [captureTarget, setCaptureTarget] = useState<Resident | null>(null);
@@ -189,7 +198,7 @@ export default function App() {
             {!loggedInResident ? (
               <ResidentAuth 
                 onLoginSuccess={handleResidentLogin} 
-                onAdminInitiate={() => setActiveTab('admin')}
+                onAdminInitiate={() => { localStorage.setItem('activeTab', 'admin'); setActiveTab('admin'); }}
                 onEmployeeInitiate={() => setActiveTab('employee')}
               />
             ) : !loggedInResident.photoDataUrl ? (
