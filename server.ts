@@ -7,6 +7,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import PocketBase from 'pocketbase';
+import { waClient } from './src/lib/whatsappBaileys';
 
 // Interface representation on the server
 interface ServerResident {
@@ -42,9 +43,6 @@ interface ServerReservation {
 
 interface ServerWhatsAppConfig {
   enabled: boolean;
-  evolutionApiUrl: string;
-  evolutionApiKey: string;
-  instanceName: string;
   templateText: string;
 }
 
@@ -148,7 +146,7 @@ async function pbSetSetting(key: string, value: any): Promise<void> {
   }
 }
 
-// ================= WHATSAPP VIA EVOLUTION API =================
+// ================= WHATSAPP VIA BAILEYS =================
 
 const AMENITY_NAMES_SERVER: Record<string, string> = {
   quadra: 'Quadra de Esportes',
@@ -181,18 +179,8 @@ async function sendWhatsAppNotification(resident: ServerResident, reservation: S
   const message = fillWhatsAppTemplate(config.templateText, resident, reservation);
 
   try {
-    const url = `${config.evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${config.instanceName}`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': config.evolutionApiKey },
-      body: JSON.stringify({ number: normalizedPhone, text: message }),
-    });
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error(`WhatsApp send failed (HTTP ${response.status}): ${errText.substring(0, 200)}`);
-    } else {
-      console.log(`WhatsApp notification sent to ${normalizedPhone} for reservation ${reservation.id}`);
-    }
+    await waClient.sendText(normalizedPhone, message);
+    console.log(`WhatsApp notification sent to ${normalizedPhone} for reservation ${reservation.id}`);
   } catch (err: any) {
     console.error('WhatsApp notification error:', err.message);
   }
@@ -914,31 +902,52 @@ async function startServer() {
     }
   });
 
-  // ================= WHATSAPP CONFIG ENDPOINTS =================
+  // ================= WHATSAPP CONFIG ENDPOINTS (Baileys) =================
 
   app.get('/api/whatsapp/config', async (req, res) => {
     try {
       const cfg = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
-      if (!cfg) return res.json(null);
-      const { evolutionApiKey, ...safe } = cfg;
-      res.json({ ...safe, evolutionApiKey: evolutionApiKey ? '***configured***' : '' });
+      res.json(cfg || { enabled: false, templateText: '' });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
   app.post('/api/whatsapp/config', async (req, res) => {
-    const { enabled, evolutionApiUrl, evolutionApiKey, instanceName, templateText } = req.body;
-    if (!evolutionApiUrl || !instanceName) return res.status(400).json({ error: 'URL da API e nome da instância são obrigatórios.' });
+    const { enabled, templateText } = req.body;
     try {
-      const existing = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
       await pbSetSetting('whatsapp_config', {
         enabled: !!enabled,
-        evolutionApiUrl: evolutionApiUrl.trim(),
-        evolutionApiKey: evolutionApiKey === '***configured***' ? (existing?.evolutionApiKey || '') : (evolutionApiKey || '').trim(),
-        instanceName: instanceName.trim(),
         templateText: templateText || '🏠 *Reserva Confirmada!*\n\nOlá, {morador}! Sua reserva no *{local}* foi confirmada.\n\n📅 *Data:* {data}\n⏰ *Horário:* {hora}\n🏢 *Unidade:* {unidade}',
       });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/whatsapp/status', (_req, res) => {
+    res.json({ status: waClient.getStatus() });
+  });
+
+  app.get('/api/whatsapp/qr', (_req, res) => {
+    const qr = waClient.getQR();
+    if (!qr) return res.json({ qr: null, status: waClient.getStatus() });
+    res.json({ qr, status: 'qr' });
+  });
+
+  app.post('/api/whatsapp/connect', async (_req, res) => {
+    try {
+      await waClient.connect();
+      res.json({ success: true, status: waClient.getStatus() });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/whatsapp/disconnect', async (_req, res) => {
+    try {
+      await waClient.disconnect();
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -948,27 +957,13 @@ async function startServer() {
   app.post('/api/whatsapp/test', async (req, res) => {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ error: 'Número de telefone é obrigatório.' });
-
-    const cfg = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
-    if (!cfg?.evolutionApiUrl || !cfg?.instanceName) {
-      return res.status(400).json({ error: 'WhatsApp não configurado.' });
+    if (waClient.getStatus() !== 'connected') {
+      return res.status(400).json({ error: 'WhatsApp não está conectado. Escaneie o QR Code primeiro.' });
     }
-
     const normalizedPhone = phone.replace(/\D/g, '');
     const phoneWithCountry = normalizedPhone.length <= 11 ? '55' + normalizedPhone : normalizedPhone;
-    const testMessage = '✅ *Teste de Notificação*\n\nSeu WhatsApp está configurado corretamente no sistema do condomínio!';
-
     try {
-      const url = `${cfg.evolutionApiUrl.replace(/\/$/, '')}/message/sendText/${cfg.instanceName}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': cfg.evolutionApiKey },
-        body: JSON.stringify({ number: phoneWithCountry, text: testMessage }),
-      });
-      if (!response.ok) {
-        const errText = await response.text();
-        return res.status(400).json({ error: `Evolution API respondeu com erro ${response.status}: ${errText.substring(0, 200)}` });
-      }
+      await waClient.sendText(phoneWithCountry, '✅ *Teste de Notificação*\n\nSeu WhatsApp está configurado corretamente no sistema do condomínio!');
       res.json({ success: true, message: 'Mensagem de teste enviada!' });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Falha ao enviar mensagem de teste.' });
@@ -1132,6 +1127,9 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
   });
+
+  // Iniciar WhatsApp Baileys em background
+  waClient.connect().catch(err => console.error('[WhatsApp] Erro ao iniciar:', err));
 }
 
 startServer().catch(err => {
