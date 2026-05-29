@@ -39,7 +39,7 @@ class WhatsAppBaileys extends EventEmitter {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, undefined as any),
       },
-      printQRInTerminal: false,
+      printQRInTerminal: true,
       browser: ['AppMHVL', 'Chrome', '1.0.0'],
       qrTimeout: 60000,
     });
@@ -62,16 +62,23 @@ class WhatsAppBaileys extends EventEmitter {
       }
 
       if (connection === 'close') {
-        const code = (lastDisconnect?.error as Boom)?.output?.statusCode;
-        const shouldReconnect = code !== DisconnectReason.loggedOut;
-        console.log(`[WhatsApp] Conexão fechada (código ${code}), reconectar: ${shouldReconnect}`);
+        const boom = lastDisconnect?.error as Boom;
+        const code = boom?.output?.statusCode;
+        const message = boom?.message || '';
+        const isLoggedOut = code === DisconnectReason.loggedOut;
+        const isQRTimeout = message.includes('QR refs attempts ended');
+        console.log(`[WhatsApp] Conexão fechada — código: ${code}, motivo: ${message || 'desconhecido'}`);
         this.status = 'disconnected';
+        this.qrCode = null;
         this.emit('status', this.status);
-        if (shouldReconnect) {
-          this.reconnectTimer = setTimeout(() => this.connect(), 5000);
-        } else {
-          // Sessão encerrada — limpar auth
+        if (isLoggedOut) {
           fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        } else if (isQRTimeout) {
+          // QR não foi escaneado a tempo — aguarda mais antes de tentar de novo
+          console.log('[WhatsApp] QR timeout — reconectando em 10s...');
+          this.reconnectTimer = setTimeout(() => this.connect(), 10000);
+        } else {
+          this.reconnectTimer = setTimeout(() => this.connect(), 5000);
         }
       }
     });
