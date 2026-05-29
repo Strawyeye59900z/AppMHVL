@@ -1132,6 +1132,14 @@ async function startServer() {
   waClient.connect().catch(err => console.error('[WhatsApp] Erro ao iniciar:', err));
 }
 
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT EXCEPTION]', err.message, err.stack);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+});
+
 startServer().catch(err => {
   console.error('Failed to start server:', err);
 });
