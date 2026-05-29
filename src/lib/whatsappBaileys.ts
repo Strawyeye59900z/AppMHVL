@@ -97,6 +97,12 @@ class WhatsAppBaileys extends EventEmitter {
     this.emit('status', this.status);
   }
 
+  async requestPairingCode(phone: string): Promise<string> {
+    if (!this.sock) throw new Error('WhatsApp não iniciado');
+    const code = await this.sock.requestPairingCode(phone);
+    return code;
+  }
+
   async sendText(phone: string, message: string): Promise<void> {
     if (this.status !== 'connected' || !this.sock) {
       throw new Error('WhatsApp não está conectado');

@@ -945,6 +945,21 @@ async function startServer() {
     }
   });
 
+  app.post('/api/whatsapp/pairing-code', async (req, res) => {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Número é obrigatório.' });
+    try {
+      if (waClient.getStatus() === 'disconnected') {
+        await waClient.connect();
+        await new Promise(r => setTimeout(r, 4000));
+      }
+      const code = await waClient.requestPairingCode(phone.replace(/\D/g, ''));
+      res.json({ code });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/whatsapp/disconnect', async (_req, res) => {
     try {
       await waClient.disconnect();
