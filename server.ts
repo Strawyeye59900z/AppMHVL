@@ -1128,8 +1128,13 @@ async function startServer() {
     console.log(`Server running on port ${PORT}`);
   });
 
-  // Iniciar WhatsApp Baileys em background
-  waClient.connect().catch(err => console.error('[WhatsApp] Erro ao iniciar:', err));
+  // Iniciar WhatsApp Baileys em background (só se houver sessão salva)
+  const fs = await import('fs');
+  if (fs.existsSync('./baileys_auth/creds.json')) {
+    waClient.connect().catch(err => console.error('[WhatsApp] Erro ao iniciar:', err));
+  } else {
+    console.log('[WhatsApp] Sem sessão salva — aguardando conexão manual pelo painel.');
+  }
 }
 
 process.on('uncaughtException', (err) => {
