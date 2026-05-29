@@ -100,7 +100,7 @@ const pbAdmin = new PocketBase(POCKETBASE_URL);
 
 async function initPocketBase() {
   try {
-    await pbAdmin.admins.authWithPassword(POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD);
+    await pbAdmin.collection('_superusers').authWithPassword(POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD);
     console.log('PocketBase admin authenticated successfully.');
   } catch (err) {
     console.error('PocketBase admin auth failed:', err);

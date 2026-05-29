@@ -6,7 +6,7 @@ const pb = new PocketBase(process.env.POCKETBASE_URL || 'http://127.0.0.1:8090')
 const DB_FILE = path.join(process.cwd(), 'data', 'db.json');
 
 async function main() {
-  await pb.admins.authWithPassword(
+  await pb.collection('_superusers').authWithPassword(
     process.env.POCKETBASE_ADMIN_EMAIL!,
     process.env.POCKETBASE_ADMIN_PASSWORD!
   );
