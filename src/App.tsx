@@ -432,6 +432,7 @@ export default function App() {
             <AdminDashboard 
               onAdminStateChange={(user) => setAdminUser(user)} 
               onBack={() => {
+                console.log('[App] onBack called from AdminDashboard', new Error().stack);
                 setActiveTab('resident');
                 setAdminUser(null);
               }}
