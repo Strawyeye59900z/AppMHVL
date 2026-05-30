@@ -490,7 +490,7 @@ async function startServer() {
     const { id, photoDataUrl } = req.body;
     if (!id || !photoDataUrl) return res.status(400).json({ error: 'ID do morador e dados da foto são obrigatórios.' });
     const approximateSizeInBytes = (photoDataUrl.length * 3) / 4;
-    if (approximateSizeInBytes > 1024 * 1024) return res.status(400).json({ error: 'A imagem excede o tamanho limite de 1MB.' });
+    if (approximateSizeInBytes > 5 * 1024 * 1024) return res.status(400).json({ error: 'A imagem excede o tamanho limite de 5MB.' });
     try {
       const residents = await pbResidents();
       const resident = residents.find(r => r.id === id);
@@ -511,7 +511,9 @@ async function startServer() {
         syncResidentToAllHikvisionDevices(id).catch(err => console.error('Hikvision background sync error:', err));
       }
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const msg = err?.response?.message || err?.message || JSON.stringify(err);
+      console.error('[upload-face] PocketBase error:', JSON.stringify(err?.response?.data || err));
+      res.status(500).json({ error: msg });
     }
   });
 
