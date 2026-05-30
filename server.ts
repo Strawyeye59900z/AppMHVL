@@ -1584,17 +1584,22 @@ async function startServer() {
         return res.status(409).json({ error: 'Foto já cadastrada.' });
       }
 
-      // Convert base64 data URL to binary for PocketBase file field
+      // Convert base64 data URL → Buffer → File (Node 20+ has File globally)
       const base64Data = photoDataUrl.replace(/^data:image\/\w+;base64,/, '');
       const imageBuffer = Buffer.from(base64Data, 'base64');
+
+      // Use File (available in Node 20) — PocketBase SDK expects File for file fields
+      const photoFile = new File([imageBuffer], 'photo.jpg', { type: 'image/jpeg' });
       const formData = new FormData();
-      const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
-      formData.append('photo', blob, 'photo.jpg');
+      formData.append('photo', photoFile);
       formData.append('status', 'registered');
 
       await pbAdmin.collection('serviceProviders').update(provider.id, formData);
+      console.log(`[Providers] Photo saved for provider ${provider.id} (${provider.name})`);
 
-      // Attempt Hikvision sync automatically
+      // Attempt Hikvision sync automatically — run in background, don't block response
+      res.json({ success: true, message: 'Foto cadastrada com sucesso!' });
+
       try {
         const allDevices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
         const enabledDevices = allDevices.filter(d => d.enabled);
@@ -1618,14 +1623,13 @@ async function startServer() {
           await pbAdmin.collection('serviceProviders').update(provider.id, {
             hikvisionSyncStatus: JSON.stringify(syncResults),
           });
+          console.log(`[Providers] Hikvision sync done for ${provider.name}:`, syncResults);
         }
-      } catch (syncErr) {
-        console.error('[ServiceProvider] Hikvision sync error:', syncErr);
+      } catch (syncErr: any) {
+        console.error('[Providers] Hikvision sync error:', syncErr.message);
       }
-
-      res.json({ success: true, message: 'Foto cadastrada com sucesso!' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (!res.headersSent) res.status(500).json({ error: err.message });
     }
   });
 
