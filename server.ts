@@ -1460,11 +1460,12 @@ async function startServer() {
   app.get('/api/providers', async (req, res) => {
     const { residentId } = req.query;
     try {
-      const filter = residentId ? `residentId = "${residentId}"` : '';
-      const records = await pbAdmin.collection('serviceProviders').getFullList({
-        ...(filter ? { filter } : {}),
-        sort: '-created',
-      });
+      const allRecords = await pbAdmin.collection('serviceProviders').getFullList({ sort: '-created' });
+      // Filter in JS to avoid PocketBase filter syntax issues with special chars in IDs
+      const records = residentId
+        ? allRecords.filter((r: any) => r.residentId === residentId)
+        : allRecords;
+      console.log(`[Providers] GET /api/providers residentId=${residentId} total=${allRecords.length} filtered=${records.length}`);
       const providers = records.map((r: any) => {
         let hikStatus: any = {};
         try {
@@ -1638,13 +1639,17 @@ async function startServer() {
     try {
       const record = await pbAdmin.collection('serviceProviders').getOne(req.params.id) as any;
       if (!record.photo) return res.status(404).send('No photo');
-      const fileUrl = pbAdmin.files.getURL(record, record.photo);
+      // Build URL directly — pbAdmin.files.getURL requires collectionName/Id on the record
+      const fileUrl = `${POCKETBASE_URL}/api/files/serviceProviders/${record.id}/${record.photo}`;
+      console.log(`[Providers] Fetching photo from: ${fileUrl}`);
       const response = await fetch(fileUrl);
-      if (!response.ok) return res.status(404).send('Photo not found');
+      if (!response.ok) {
+        console.error(`[Providers] Photo fetch failed: ${response.status} ${fileUrl}`);
+        return res.status(404).send('Photo not found');
+      }
       res.setHeader('Content-Type', response.headers.get('content-type') || 'image/jpeg');
       res.setHeader('Cache-Control', 'private, max-age=3600');
-      const arrayBuffer = await response.arrayBuffer();
-      res.send(Buffer.from(arrayBuffer));
+      res.send(Buffer.from(await response.arrayBuffer()));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
