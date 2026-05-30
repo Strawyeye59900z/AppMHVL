@@ -41,7 +41,7 @@ class WhatsAppBaileys extends EventEmitter {
         keys: makeCacheableSignalKeyStore(state.keys, undefined as any),
       },
       printQRInTerminal: false,
-      browser: ['AppMHVL', 'Chrome', '1.0.0'],
+      browser: ['Ubuntu', 'Chrome', '20.0.04'],
       qrTimeout: 60000,
     });
 

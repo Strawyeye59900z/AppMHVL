@@ -69,10 +69,10 @@ export default function WhatsAppPanel() {
     ]).finally(() => setLoading(false));
   }, [loadStatus]);
 
-  // Polling quando status é connecting ou qr
+  // Polling sempre ativo: rápido durante transições, lento quando estável
   useEffect(() => {
-    if (status === 'connected' || status === 'disconnected') return;
-    const interval = setInterval(loadStatus, 3000);
+    const delay = (status === 'connecting' || status === 'qr') ? 2000 : 8000;
+    const interval = setInterval(loadStatus, delay);
     return () => clearInterval(interval);
   }, [status, loadStatus]);
 

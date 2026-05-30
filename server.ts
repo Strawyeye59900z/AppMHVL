@@ -378,7 +378,7 @@ async function syncResidentToAllHikvisionDevices(residentId: string): Promise<vo
     hikvisionSyncStatus[device.id] = result;
     console.log(`Hikvision sync [${device.name}] resident ${resident.name}: ${result.status}`);
   }
-  await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus });
+  await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus: JSON.stringify(hikvisionSyncStatus) });
 }
 
 async function startServer() {
@@ -424,10 +424,9 @@ async function startServer() {
       if (!resident) {
         return res.status(404).json({ error: 'Apartamento não cadastrado.', needsSignup: true });
       }
-      // Usa o username real do registro (não recalcula), pois registros antigos podem
-      // ter sido criados com formatos diferentes.
-      const realUsername = (resident as any).username;
-      if (!realUsername) return res.status(500).json({ error: 'Cadastro inválido. Contate o administrador.' });
+      // Usa o username real do registro; se estiver vazio (registro antigo), usa o padrão atual.
+      const realUsername = (resident as any).username ||
+        `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`;
       try {
         await pbAdmin.collection('residents').authWithPassword(realUsername, password);
       } catch {
@@ -1244,7 +1243,7 @@ async function startServer() {
         results[device.id] = await syncFaceToHikvisionServer(resident, device);
       }
       const existing = resident.hikvisionSyncStatus || {};
-      await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus: { ...existing, ...results } });
+      await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus: JSON.stringify({ ...existing, ...results }) });
       res.json({ success: true, results });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
