@@ -1460,17 +1460,23 @@ async function startServer() {
   app.get('/api/providers', async (req, res) => {
     const { residentId } = req.query;
     try {
-      let allRecords: any[] = [];
-      try {
-        allRecords = await pbAdmin.collection('serviceProviders').getFullList({ sort: '-created' });
-      } catch (pbErr: any) {
-        console.error('[Providers] PocketBase getFullList error:', pbErr?.response?.data || pbErr.message);
-        return res.status(500).json({ error: 'Erro ao acessar collection serviceProviders: ' + (pbErr?.response?.data?.message || pbErr.message) });
+      // Use raw fetch against PocketBase REST API to bypass SDK quirks
+      const token = pbAdmin.authStore.token;
+      const pbUrl = `${POCKETBASE_URL}/api/collections/serviceProviders/records?perPage=500&sort=-created`;
+      console.log(`[Providers] Fetching: ${pbUrl} token=${token ? 'ok' : 'MISSING'}`);
+      const pbRes = await fetch(pbUrl, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const pbBody = await pbRes.json();
+      console.log(`[Providers] PB response status=${pbRes.status} keys=${Object.keys(pbBody).join(',')}`);
+      if (!pbRes.ok) {
+        return res.status(500).json({ error: 'PocketBase error: ' + JSON.stringify(pbBody) });
       }
+      const allRecords: any[] = pbBody.items || [];
       const records = residentId
         ? allRecords.filter((r: any) => r.residentId === residentId)
         : allRecords;
-      console.log(`[Providers] GET /api/providers residentId=${residentId} total=${allRecords.length} filtered=${records.length}`);
+      console.log(`[Providers] total=${allRecords.length} filtered=${records.length}`);
       const providers = records.map((r: any) => {
         let hikStatus: any = {};
         try {
