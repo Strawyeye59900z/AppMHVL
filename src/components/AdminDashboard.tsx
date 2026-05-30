@@ -1619,44 +1619,9 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
                       </td>
                       <td className="py-3 px-2">
                         {resident.photoDataUrl ? (
-                          <div className="flex flex-col gap-1 select-none">
-                            <div className="flex items-center gap-1">
-                              {resident.syncStatus === 'synced' ? (
-                                <span className="px-2 py-0.5 bg-emerald-950/40 text-emerald-400 border border-emerald-900/30 text-[10px] rounded-full font-semibold flex items-center gap-0.5 uppercase tracking-wide">
-                                  <CheckCircle2 size={10} /> Sincronizado
-                                </span>
-                              ) : resident.syncStatus === 'failed' ? (
-                                <span className="px-2 py-0.5 bg-red-950/40 text-red-100 border border-red-900/35 text-[10px] rounded-full font-semibold flex items-center gap-0.5 uppercase tracking-wide" title={resident.syncError}>
-                                  <AlertCircle size={10} /> Erro Drive
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 bg-amber-950/40 text-amber-400 border border-amber-900/30 text-[10px] rounded-full font-semibold flex items-center gap-0.5 uppercase tracking-wide">
-                                  <Clock size={10} /> Pendente
-                                </span>
-                              )}
-                            </div>
-                            
-                            {/* Physical hardware device facial reader status details */}
-                            <div className="flex items-center">
-                              {resident.deviceRegistered ? (
-                                <button
-                                  onClick={() => handleToggleDeviceRegistered(resident.id, true)}
-                                  className="text-[9px] text-emerald-400 hover:text-amber-400 bg-emerald-950/10 hover:bg-amber-950/20 border border-emerald-900/15 hover:border-amber-900/25 rounded px-1.5 py-0.5 transition-all font-semibold uppercase flex items-center gap-0.5 cursor-pointer leading-none"
-                                  title="Clique para reverter para pendente no leitor facial físico"
-                                >
-                                  ✔ Aparelho OK
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleToggleDeviceRegistered(resident.id, false)}
-                                  className="text-[9px] bg-purple-950/30 hover:bg-purple-900/40 text-purple-400 border border-purple-900/20 hover:border-purple-500/30 rounded px-1.5 py-0.5 transition-all font-semibold uppercase flex items-center gap-0.5 cursor-pointer leading-none"
-                                  title="Clique para marcar como cadastrado no leitor facial físico"
-                                >
-                                  ✖ Pendente Aparelho
-                                </button>
-                              )}
-                            </div>
-                          </div>
+                          <span className="px-2 py-0.5 bg-emerald-950/40 text-emerald-400 border border-emerald-900/30 text-[10px] rounded-full font-semibold uppercase tracking-wide select-none">
+                            Com Foto
+                          </span>
                         ) : (
                           <span className="px-2 py-0.5 bg-zinc-800 text-zinc-400 text-[10px] rounded-full font-medium uppercase tracking-wide select-none">
                             Sem Foto
