@@ -137,7 +137,7 @@ export default function HikvisionPanel() {
       const res = await fetch('/api/hikvision/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceIp: device.deviceIp, port: device.port, username: device.username, password: device.password }),
+        body: JSON.stringify({ deviceId: device.id }),
       });
       const data = await res.json();
       setTestResults(prev => ({

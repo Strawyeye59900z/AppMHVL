@@ -1059,14 +1059,25 @@ async function startServer() {
   });
 
   app.post('/api/hikvision/test-connection', async (req, res) => {
-    const { deviceIp, port, username, password } = req.body;
-    if (!deviceIp || !username || !password) {
-      return res.status(400).json({ error: 'IP, usuário e senha são obrigatórios.' });
+    const { deviceId, deviceIp, port, username, password } = req.body;
+
+    let ip: string, p: number, user: string, pass: string;
+
+    if (deviceId) {
+      const devices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const device = devices.find(d => d.id === deviceId);
+      if (!device) return res.status(404).json({ error: 'Dispositivo não encontrado.' });
+      ip = device.deviceIp; p = device.port; user = device.username; pass = device.password;
+    } else {
+      if (!deviceIp || !username || !password) {
+        return res.status(400).json({ error: 'IP, usuário e senha são obrigatórios.' });
+      }
+      ip = deviceIp.trim(); p = Number(port) || 80; user = username; pass = password;
     }
 
-    const url = `http://${deviceIp.trim()}:${Number(port) || 80}/ISAPI/System/deviceInfo`;
+    const url = `http://${ip}:${p}/ISAPI/System/deviceInfo`;
     try {
-      const client = hikFetch(username, password);
+      const client = hikFetch(user, pass);
       const response = await client.fetch(url, {
         method: 'GET',
         headers: { Accept: 'application/xml' },
