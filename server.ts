@@ -849,8 +849,10 @@ async function startServer() {
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório.' });
     try {
       const tempPassword = Math.random().toString(36).slice(2, 10) + 'Aa1!';
+      // username deve ser único e sem espaços no PocketBase
+      const username = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') + '_' + Date.now();
       const newEmployee = await pbAdmin.collection('employees').create({
-        username: name.trim(),
+        username,
         password: tempPassword,
         passwordConfirm: tempPassword,
         name: name.trim(),
