@@ -20,32 +20,36 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, o
   const [activeSubTab, setActiveSubTab] = useState<'me' | 'packages'>(initialTab);
   useEffect(() => { setActiveSubTab(initialTab); }, [initialTab]);
 
-  // Poll current resident state from server to reflect Hikvision sync status automatically
-  const [liveResident, setLiveResident] = useState<Resident>(resident);
-  useEffect(() => { setLiveResident(resident); }, [resident]);
+  // Local state for live status — only synced/deviceRegistered fields are polled
+  const [syncStatus, setSyncStatus] = useState(resident.syncStatus);
+  const [deviceRegistered, setDeviceRegistered] = useState(!!resident.deviceRegistered);
+  const isSynced = syncStatus === 'synced' && deviceRegistered;
+  const isSyncedRef = React.useRef(isSynced);
+  isSyncedRef.current = isSynced;
+
   useEffect(() => {
-    // Only poll while not yet synced/registered
-    if (liveResident.syncStatus === 'synced' && liveResident.deviceRegistered) return;
-    const poll = async () => {
+    // Poll the server every 6s to check if Hikvision sync completed in background
+    // Stop polling once fully synced — use ref to avoid recreating interval on every state change
+    const interval = setInterval(async () => {
+      if (isSyncedRef.current) { clearInterval(interval); return; }
       try {
-        const res = await fetch('/api/residents');
+        const res = await fetch(`/api/residents/status/${resident.id}`);
         if (!res.ok) return;
-        const all: Resident[] = await res.json();
-        const updated = all.find(r => r.id === resident.id);
-        if (!updated) return;
-        setLiveResident(updated);
-        if (onResidentUpdated) onResidentUpdated(updated);
+        const data = await res.json();
+        setSyncStatus(data.syncStatus);
+        setDeviceRegistered(!!data.deviceRegistered);
+        if (data.syncStatus === 'synced' && data.deviceRegistered && onResidentUpdated) {
+          onResidentUpdated({ ...resident, syncStatus: data.syncStatus, deviceRegistered: data.deviceRegistered });
+        }
       } catch { /* ignore */ }
-    };
-    poll();
-    const interval = setInterval(poll, 8000);
+    }, 6000);
     return () => clearInterval(interval);
-  }, [liveResident.syncStatus, liveResident.deviceRegistered]);
+  }, [resident.id]); // only depends on ID — never recreates
 
   const [packages, setPackages] = useState<any[]>([]);
   const [loadingPackages, setLoadingPackages] = useState(false);
 
-  const isSync = liveResident.syncStatus === 'synced';
+  const isSync = syncStatus === 'synced';
 
   const fetchPackages = async () => {
     setLoadingPackages(true);
@@ -110,11 +114,11 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, o
               <div className="relative">
                 {/* Symmetrical border styled face border wrapper */}
                 <div className="w-40 h-40 rounded-full border-4 border-dashed border-gold/30 flex items-center justify-center p-1.5 relative overflow-hidden bg-dark-input">
-                  {liveResident.photoDataUrl ? (
+                  {resident.photoDataUrl ? (
                     <img
                       id="resident-face-badge"
-                      src={liveResident.photoDataUrl}
-                      alt={liveResident.name}
+                      src={resident.photoDataUrl}
+                      alt={resident.name}
                       className="w-full h-full rounded-full object-cover scale-x-[-1]"
                       referrerPolicy="no-referrer"
                     />
@@ -139,10 +143,10 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, o
             </div>
 
             <h2 className="font-display text-2xl font-semibold tracking-tight text-white truncate max-w-full px-2">
-              {liveResident.name}
+              {resident.name}
             </h2>
             <p className="text-xs text-zinc-500 font-mono uppercase tracking-widest mt-2">
-              Apartamento {liveResident.apartment}
+              Apartamento {resident.apartment}
             </p>
 
             <div className="my-6 p-4 bg-dark-input border border-dark-border rounded-xl text-left space-y-3.5">
@@ -182,7 +186,7 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, o
                 </div>
                 <div className="flex-1 min-w-0">
                   <h4 className="text-xs font-semibold text-zinc-300">Status no Aparelho da Entrada</h4>
-                  {liveResident.deviceRegistered ? (
+                  {deviceRegistered ? (
                     <p className="text-xs text-emerald-400 font-medium leading-relaxed mt-1">
                       ✔ Cadastrado no dispositivo físico! Seu rosto já está ativo no leitor do reconhecimento facial do portão principal.
                     </p>

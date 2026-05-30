@@ -448,6 +448,20 @@ async function startServer() {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
+  // Get status fields only for a single resident (used by frontend polling)
+  app.get('/api/residents/status/:id', async (req, res) => {
+    try {
+      const rec = await pbAdmin.collection('residents').getOne(req.params.id) as any;
+      res.json({
+        id: rec.id,
+        syncStatus: rec.syncStatus,
+        deviceRegistered: !!rec.deviceRegistered,
+      });
+    } catch (err: any) {
+      res.status(404).json({ error: 'Morador não encontrado.' });
+    }
+  });
+
   // Get all residents (excluding passwords)
   app.get('/api/residents', async (req, res) => {
     try {
