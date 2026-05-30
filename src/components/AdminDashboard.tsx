@@ -24,7 +24,8 @@ import {
   Building,
   Lock,
   Download,
-  ShieldAlert
+  ShieldAlert,
+  KeyRound
 } from 'lucide-react';
 import { Resident, SyncProgress } from '../types';
 import { logout } from '../pocketbase';
@@ -70,6 +71,8 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
   const [deletingResidentId, setDeletingResidentId] = useState<string | null>(null);
   const [deletingEmployeeId, setDeletingEmployeeId] = useState<string | null>(null);
   const [resettingEmployeeId, setResettingEmployeeId] = useState<string | null>(null);
+  const [resettingResidentId, setResettingResidentId] = useState<string | null>(null);
+  const [residentResetPassword, setResidentResetPassword] = useState('');
   const [sharedDriveInfo, setSharedDriveInfo] = useState<{ email?: string; expiresAt?: string } | null>(null);
 
   // Employees administration states and actions
@@ -636,6 +639,31 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
     setSyncLogs([]);
     // Parent clears the session and returns to the resident portal.
     onLogout();
+  };
+
+  // Reset resident password
+  const handleResetResidentPassword = async (id: string, newPassword: string) => {
+    try {
+      const res = await fetch('/api/residents/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, newPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAdminSuccess('Senha do morador redefinida com sucesso!');
+        setTimeout(() => setAdminSuccess(''), 4000);
+      } else {
+        setAdminError(data.error || 'Erro ao redefinir senha.');
+        setTimeout(() => setAdminError(''), 4000);
+      }
+    } catch {
+      setAdminError('Erro de conexão ao redefinir senha.');
+      setTimeout(() => setAdminError(''), 4000);
+    } finally {
+      setResettingResidentId(null);
+      setResidentResetPassword('');
+    }
   };
 
   // Handle delete resident account
@@ -1595,6 +1623,13 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
                             </button>
                           )}
                           <button
+                            title="Redefinir senha do morador"
+                            onClick={() => setResettingResidentId(resident.id)}
+                            className="p-1.5 text-zinc-500 hover:text-yellow-400 hover:bg-yellow-950/30 rounded-lg cursor-pointer transition-colors"
+                          >
+                            <KeyRound size={13} />
+                          </button>
+                          <button
                             id={`admin-delete-res-${resident.id}`}
                             onClick={() => handleDeleteResident(resident.id, resident.name)}
                             className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg cursor-pointer transition-colors"
@@ -1789,6 +1824,47 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
                   className="px-4 py-2 bg-red-650 hover:bg-red-600 border border-red-900/20 text-xs font-semibold text-white rounded-lg cursor-pointer transition-colors flex items-center gap-1 font-display"
                 >
                   <Trash2 size={13} /> Confirmar Exclusão
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+        {resettingResidentId && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] p-4"
+            onClick={() => { setResettingResidentId(null); setResidentResetPassword(''); }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-dark-card border border-dark-border rounded-2xl p-6 shadow-2xl max-w-sm w-full flex flex-col gap-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 text-yellow-400">
+                <KeyRound size={24} />
+                <h3 className="font-display font-bold text-base text-white">Redefinir Senha do Morador</h3>
+              </div>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                {residents.find(r => r.id === resettingResidentId)?.name} — Apto {residents.find(r => r.id === resettingResidentId)?.apartment}
+              </p>
+              <input
+                type="password"
+                value={residentResetPassword}
+                onChange={e => setResidentResetPassword(e.target.value)}
+                placeholder="Nova senha (mín. 4 caracteres)"
+                className="bg-dark-input border border-dark-border rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-yellow-500 placeholder-zinc-600"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setResettingResidentId(null); setResidentResetPassword(''); }}
+                  className="px-4 py-2 bg-dark-input hover:bg-dark-hover border border-dark-border text-xs font-semibold text-zinc-400 rounded-lg cursor-pointer transition-colors"
+                >Cancelar</button>
+                <button
+                  onClick={() => residentResetPassword.length >= 4 && handleResetResidentPassword(resettingResidentId!, residentResetPassword)}
+                  disabled={residentResetPassword.length < 4}
+                  className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-xs font-semibold text-white rounded-lg cursor-pointer transition-colors flex items-center gap-1 disabled:opacity-40"
+                >
+                  <KeyRound size={13} /> Redefinir
                 </button>
               </div>
             </motion.div>

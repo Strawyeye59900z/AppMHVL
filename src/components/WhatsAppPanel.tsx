@@ -40,9 +40,6 @@ export default function WhatsAppPanel() {
   const [testPhone, setTestPhone] = useState('');
   const [testing, setTesting] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [pairingPhone, setPairingPhone] = useState('');
-  const [pairingCode, setPairingCode] = useState('');
-  const [requestingCode, setRequestingCode] = useState(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -111,28 +108,6 @@ export default function WhatsAppPanel() {
       setError(err.message);
     } finally {
       setConnecting(false);
-    }
-  };
-
-  const handleRequestPairingCode = async () => {
-    if (!pairingPhone.trim()) { setError('Digite o número do WhatsApp.'); return; }
-    setRequestingCode(true);
-    setError('');
-    setPairingCode('');
-    try {
-      const res = await fetch('/api/whatsapp/pairing-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: pairingPhone }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao gerar código.');
-      setPairingCode(data.code);
-      setTimeout(loadStatus, 5000);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setRequestingCode(false);
     }
   };
 
@@ -234,38 +209,22 @@ export default function WhatsAppPanel() {
         )}
 
         {/* Pairing Code */}
-        {status === 'disconnected' || status === 'connecting' ? (
+        {status === 'disconnected' ? (
           <div className="space-y-3">
-            <p className="text-[10px] text-zinc-400 font-mono">Digite o número do WhatsApp para receber o código de vinculação:</p>
-            <div className="flex gap-2">
-              <input
-                type="tel"
-                value={pairingPhone}
-                onChange={e => setPairingPhone(e.target.value)}
-                placeholder="5571991081158"
-                className="flex-1 bg-dark-input border border-dark-border rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 placeholder-zinc-600"
-              />
-              <button
-                onClick={handleRequestPairingCode}
-                disabled={requestingCode}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl cursor-pointer transition-all disabled:opacity-50"
-              >
-                {requestingCode ? <Loader2 size={13} className="animate-spin" /> : <QrCode size={13} />}
-                {requestingCode ? 'Gerando...' : 'Gerar Código'}
-              </button>
-            </div>
-            {pairingCode && (
-              <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-center">
-                <p className="text-[10px] text-emerald-400 font-mono mb-2">Digite este código no WhatsApp → Aparelhos Conectados → Vincular com número:</p>
-                <p className="text-3xl font-bold text-white tracking-[0.3em] font-mono">{pairingCode}</p>
-              </div>
-            )}
-            {(status === 'connecting') && (
-              <button onClick={loadStatus} className="flex items-center gap-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-xs font-bold rounded-xl cursor-pointer transition-all">
-                <RefreshCw size={13} />Atualizar Status
-              </button>
-            )}
+            <p className="text-[10px] text-zinc-400 font-mono">Clique para gerar o QR Code e vincule pelo WhatsApp → Aparelhos Conectados → Conectar um aparelho.</p>
+            <button
+              onClick={handleConnect}
+              disabled={connecting}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl cursor-pointer transition-all disabled:opacity-50"
+            >
+              {connecting ? <Loader2 size={13} className="animate-spin" /> : <QrCode size={13} />}
+              {connecting ? 'Aguarde...' : 'Gerar QR Code'}
+            </button>
           </div>
+        ) : status === 'connecting' ? (
+          <button onClick={loadStatus} className="flex items-center gap-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-xs font-bold rounded-xl cursor-pointer transition-all">
+            <RefreshCw size={13} />Atualizar Status
+          </button>
         ) : status === 'connected' ? (
           <button
             onClick={handleDisconnect}

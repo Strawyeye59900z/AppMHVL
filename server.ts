@@ -372,7 +372,9 @@ async function syncResidentToAllHikvisionDevices(residentId: string): Promise<vo
   const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident & { photo?: string; collectionId?: string };
   if (!resident || (!(resident as any).photo && !resident.photoDataUrl)) return;
 
-  const hikvisionSyncStatus: Record<string, HikvisionFaceSyncStatus> = resident.hikvisionSyncStatus || {};
+  const rawStatus = (resident as any).hikvisionSyncStatus;
+  const hikvisionSyncStatus: Record<string, HikvisionFaceSyncStatus> =
+    typeof rawStatus === 'string' ? (JSON.parse(rawStatus) || {}) : (rawStatus || {});
   for (const device of devices) {
     const result = await syncFaceToHikvisionServer(resident, device);
     hikvisionSyncStatus[device.id] = result;
@@ -532,7 +534,9 @@ async function startServer() {
       const resident = residents.find(r => r.id === id);
       if (!resident) return res.status(404).json({ error: 'Morador não encontrado.' });
       const enabledDevices = ((await pbSetting('hikvision_devices')) || []).filter((d: any) => d.enabled);
-      const hikvisionSyncStatus: Record<string, any> = resident.hikvisionSyncStatus || {};
+      const rawHikStatus = (resident as any).hikvisionSyncStatus;
+      const hikvisionSyncStatus: Record<string, any> =
+        typeof rawHikStatus === 'string' ? (JSON.parse(rawHikStatus) || {}) : (rawHikStatus || {});
       for (const device of enabledDevices) {
         hikvisionSyncStatus[device.id] = { status: 'pending' };
       }
@@ -609,6 +613,18 @@ async function startServer() {
     try {
       await pbAdmin.collection('residents').update(id, { deviceRegistered: !!deviceRegistered });
       res.json({ message: 'Status atualizado com sucesso.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Reset resident password (called by Admin)
+  app.post('/api/residents/reset-password', async (req, res) => {
+    const { id, newPassword } = req.body;
+    if (!id || !newPassword || newPassword.length < 4) return res.status(400).json({ error: 'ID e nova senha (mínimo 4 caracteres) são obrigatórios.' });
+    try {
+      await pbAdmin.collection('residents').update(id, { password: newPassword, passwordConfirm: newPassword });
+      res.json({ success: true, message: 'Senha do morador redefinida com sucesso.' });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1228,6 +1244,42 @@ async function startServer() {
     }
   });
 
+  // Consulta direta ao dispositivo Hikvision — retorna lista de employeeNo cadastrados
+  app.post('/api/hikvision/device-users', async (req, res) => {
+    const { deviceId } = req.body;
+    if (!deviceId) return res.status(400).json({ error: 'deviceId é obrigatório.' });
+    try {
+      const devices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const device = devices.find(d => d.id === deviceId);
+      if (!device) return res.status(404).json({ error: 'Dispositivo não encontrado.' });
+      const base = `http://${device.deviceIp}:${device.port}`;
+      const client = hikFetch(device.username, device.password);
+      const searchRes = await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Search?format=json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ UserInfoSearchCond: { searchID: '0', searchResultPosition: 0, maxResults: 100 } }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!searchRes.ok) return res.status(400).json({ error: `Dispositivo retornou ${searchRes.status}` });
+      const data = await searchRes.json();
+      const users = data?.UserInfoSearch?.UserInfo || [];
+      const arr = Array.isArray(users) ? users : [users];
+      // Mapeia employeeNo → nome para cruzar com moradores
+      const residents = await pbResidents();
+      const personIdMap: Record<string, string> = {};
+      for (const r of residents) {
+        const personId = (parseInt(r.id.replace(/\D/g, '').slice(0, 9), 10) || Math.abs(hashCode(r.id))).toString();
+        personIdMap[personId] = r.id;
+      }
+      const registeredResidentIds = arr
+        .map((u: any) => personIdMap[String(u.employeeNo)])
+        .filter(Boolean);
+      res.json({ totalUsers: arr.length, registeredResidentIds, rawUsers: arr.map((u: any) => ({ employeeNo: u.employeeNo, name: u.name })) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/hikvision/sync', async (req, res) => {
     const { residentId, deviceId } = req.body;
     if (!residentId) return res.status(400).json({ error: 'ID do morador é obrigatório.' });
@@ -1242,7 +1294,9 @@ async function startServer() {
       for (const device of devices) {
         results[device.id] = await syncFaceToHikvisionServer(resident, device);
       }
-      const existing = resident.hikvisionSyncStatus || {};
+      const rawExisting = (resident as any).hikvisionSyncStatus;
+      const existing: Record<string, HikvisionFaceSyncStatus> =
+        typeof rawExisting === 'string' ? (JSON.parse(rawExisting) || {}) : (rawExisting || {});
       await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus: JSON.stringify({ ...existing, ...results }) });
       res.json({ success: true, results });
     } catch (err: any) {
@@ -1258,7 +1312,7 @@ async function startServer() {
         devices: devices.map(d => ({ id: d.id, name: d.name, enabled: d.enabled })),
         residents: residents.map(r => ({
           id: r.id, name: r.name, apartment: r.apartment, block: r.block,
-          hasPhoto: !!r.photoDataUrl, hikvisionSyncStatus: r.hikvisionSyncStatus || {},
+          hasPhoto: !!r.photoDataUrl, hikvisionSyncStatus: (() => { const raw = (r as any).hikvisionSyncStatus; return typeof raw === 'string' ? (JSON.parse(raw) || {}) : (raw || {}); })(),
         })),
       });
     } catch (err: any) {

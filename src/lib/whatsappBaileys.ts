@@ -70,18 +70,21 @@ class WhatsAppBaileys extends EventEmitter {
         const message = boom?.message || '';
         const isLoggedOut = code === DisconnectReason.loggedOut;
         const isQRTimeout = message.includes('QR refs attempts ended');
-        console.log(`[WhatsApp] Conexão fechada — código: ${code}, motivo: ${message || 'desconhecido'}`);
+        // 515 = restart required (multi-device handshake), 428 = precondition — reconectar é esperado
+        const shouldReconnect = !isLoggedOut;
+        console.log(`[WhatsApp] Conexão fechada — código: ${code}, motivo: ${message || 'desconhecido'}, reconectar: ${shouldReconnect}`);
         this.status = 'disconnected';
         this.qrCode = null;
         this.emit('status', this.status);
         if (isLoggedOut) {
           fs.rmSync(AUTH_DIR, { recursive: true, force: true });
         } else if (isQRTimeout) {
-          // QR não foi escaneado a tempo — aguarda mais antes de tentar de novo
           console.log('[WhatsApp] QR timeout — reconectando em 10s...');
           this.reconnectTimer = setTimeout(() => this.connect(), 10000);
         } else {
-          this.reconnectTimer = setTimeout(() => this.connect(), 5000);
+          // Delay maior para código 515 (restart após QR scan) — dá tempo do handshake completar
+          const delay = code === 515 ? 2000 : 5000;
+          this.reconnectTimer = setTimeout(() => this.connect(), delay);
         }
       }
     });
