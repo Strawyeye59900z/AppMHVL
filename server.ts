@@ -1460,8 +1460,13 @@ async function startServer() {
   app.get('/api/providers', async (req, res) => {
     const { residentId } = req.query;
     try {
-      const allRecords = await pbAdmin.collection('serviceProviders').getFullList({ sort: '-created' });
-      // Filter in JS to avoid PocketBase filter syntax issues with special chars in IDs
+      let allRecords: any[] = [];
+      try {
+        allRecords = await pbAdmin.collection('serviceProviders').getFullList({ sort: '-created' });
+      } catch (pbErr: any) {
+        console.error('[Providers] PocketBase getFullList error:', pbErr?.response?.data || pbErr.message);
+        return res.status(500).json({ error: 'Erro ao acessar collection serviceProviders: ' + (pbErr?.response?.data?.message || pbErr.message) });
+      }
       const records = residentId
         ? allRecords.filter((r: any) => r.residentId === residentId)
         : allRecords;
