@@ -110,11 +110,12 @@ async function initPocketBase() {
 // ---- PocketBase helpers ----
 
 function residentPhotoDataUrl(rec: any): string | undefined {
-  if (rec.photoDataUrl) return rec.photoDataUrl;
+  // Sempre devolve a URL do proxy Express (/api/residents/photo/:id) para que o browser
+  // nunca precise acessar diretamente o PocketBase (127.0.0.1 — inacessível externamente).
   if (rec.photo) {
-    // Gera URL pública do arquivo no PocketBase acessível pelo browser
-    return `${POCKETBASE_URL}/api/files/${rec.collectionId}/${rec.id}/${rec.photo}`;
+    return `/api/residents/photo/${rec.id}`;
   }
+  if (rec.photoDataUrl) return rec.photoDataUrl;
   return undefined;
 }
 
@@ -250,21 +251,31 @@ async function ensureFaceLib(base: string, client: any): Promise<string> {
   return '1';
 }
 
-async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: string }, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
+async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: string; collectionId?: string }, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
   let photoBuffer: Buffer | null = null;
 
-  if (resident.photoDataUrl) {
+  // Prioridade: campo binário "photo" no PocketBase → URL interna (acessível no servidor)
+  if ((resident as any).photo) {
+    const internalUrl = `${POCKETBASE_URL}/api/files/${(resident as any).collectionId}/${resident.id}/${(resident as any).photo}`;
+    try {
+      const photoRes = await fetch(internalUrl, { signal: AbortSignal.timeout(10000) });
+      if (photoRes.ok) photoBuffer = Buffer.from(await photoRes.arrayBuffer());
+    } catch { /* fallback para photoDataUrl */ }
+  }
+
+  if (!photoBuffer && resident.photoDataUrl) {
     if (resident.photoDataUrl.startsWith('http')) {
-      // URL pública de arquivo no PocketBase — baixa via HTTP
+      // URL absoluta (legado ou outro caso)
       try {
         const photoRes = await fetch(resident.photoDataUrl, { signal: AbortSignal.timeout(10000) });
         if (photoRes.ok) photoBuffer = Buffer.from(await photoRes.arrayBuffer());
       } catch { /* fallback */ }
-    } else {
+    } else if (resident.photoDataUrl.startsWith('data:')) {
       // Base64 legado
       const match = resident.photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
       if (match) photoBuffer = Buffer.from(match[2], 'base64');
     }
+    // URLs relativas (/api/residents/photo/:id) são ignoradas aqui — já foram tratadas acima via campo photo
   }
 
   if (!photoBuffer) {
@@ -358,8 +369,8 @@ async function syncResidentToAllHikvisionDevices(residentId: string): Promise<vo
   const devices = ((await pbSetting('hikvision_devices')) || []).filter((d: ServerHikvisionDevice) => d.enabled);
   if (devices.length === 0) return;
 
-  const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident;
-  if (!resident || !resident.photoDataUrl) return;
+  const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident & { photo?: string; collectionId?: string };
+  if (!resident || (!(resident as any).photo && !resident.photoDataUrl)) return;
 
   const hikvisionSyncStatus: Record<string, HikvisionFaceSyncStatus> = resident.hikvisionSyncStatus || {};
   for (const device of devices) {
@@ -413,11 +424,12 @@ async function startServer() {
       if (!resident) {
         return res.status(404).json({ error: 'Apartamento não cadastrado.', needsSignup: true });
       }
-      // PocketBase auth collections store hashed passwords — use authWithPassword
-      // username segue o padrão: apt{apartment}_bloco{block} (sem espaços)
-      const username = `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`;
+      // Usa o username real do registro (não recalcula), pois registros antigos podem
+      // ter sido criados com formatos diferentes.
+      const realUsername = (resident as any).username;
+      if (!realUsername) return res.status(500).json({ error: 'Cadastro inválido. Contate o administrador.' });
       try {
-        await pbAdmin.collection('residents').authWithPassword(username, password);
+        await pbAdmin.collection('residents').authWithPassword(realUsername, password);
       } catch {
         return res.status(401).json({ error: 'Senha incorreta.' });
       }
@@ -533,10 +545,10 @@ async function startServer() {
       form.append('deviceRegistered', 'false');
       form.append('hikvisionSyncStatus', JSON.stringify(hikvisionSyncStatus));
       const updated = await pbAdmin.collection('residents').update(id, form);
-      // Devolve photoDataUrl como URL pública para o frontend continuar funcionando
+      // Devolve URL do proxy Express — o browser nunca acessa o PocketBase diretamente
       const updatedRec = updated as any;
       const publicPhotoUrl = updatedRec.photo
-        ? `${POCKETBASE_URL}/api/files/${updatedRec.collectionId}/${updatedRec.id}/${updatedRec.photo}`
+        ? `/api/residents/photo/${updatedRec.id}`
         : photoDataUrl;
       res.json({ ...updatedRec, photoDataUrl: publicPhotoUrl });
       if (enabledDevices.length > 0) {
@@ -549,15 +561,20 @@ async function startServer() {
     }
   });
 
-  // Get photo of a resident
+  // Get photo of a resident — serves as proxy so the browser never needs to reach
+  // PocketBase directly (which is on 127.0.0.1 and inaccessible from outside the LXC).
   app.get('/api/residents/photo/:id', async (req, res) => {
     try {
-      const resident = await pbAdmin.collection('residents').getOne(req.params.id) as unknown as ServerResident & { photo?: string };
+      const resident = await pbAdmin.collection('residents').getOne(req.params.id) as unknown as ServerResident & { photo?: string; collectionId?: string };
       if (!resident) return res.status(404).send('Photo not found');
-      // Suporta tanto foto salva como arquivo (campo photo) quanto base64 legado (campo photoDataUrl)
-      if (resident.photo) {
-        const photoUrl = pbAdmin.files.getURL(resident, resident.photo);
-        return res.redirect(photoUrl);
+      if ((resident as any).photo) {
+        // Proxy: baixa internamente e devolve ao browser sem expor a URL interna
+        const internalUrl = `${POCKETBASE_URL}/api/files/${(resident as any).collectionId}/${resident.id}/${(resident as any).photo}`;
+        const photoRes = await fetch(internalUrl, { signal: AbortSignal.timeout(10000) });
+        if (!photoRes.ok) return res.status(404).send('Photo not found');
+        res.setHeader('Content-Type', photoRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.send(Buffer.from(await photoRes.arrayBuffer()));
       }
       if (resident.photoDataUrl) {
         const matches = resident.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
@@ -1216,9 +1233,9 @@ async function startServer() {
     const { residentId, deviceId } = req.body;
     if (!residentId) return res.status(400).json({ error: 'ID do morador é obrigatório.' });
     try {
-      const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident;
+      const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident & { photo?: string; collectionId?: string };
       if (!resident) return res.status(404).json({ error: 'Morador não encontrado.' });
-      if (!resident.photoDataUrl) return res.status(400).json({ error: 'Morador não possui foto.' });
+      if (!(resident as any).photo && !resident.photoDataUrl) return res.status(400).json({ error: 'Morador não possui foto.' });
       const allDevices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
       const devices = deviceId ? allDevices.filter(d => d.id === deviceId) : allDevices.filter(d => d.enabled);
       if (devices.length === 0) return res.status(400).json({ error: 'Nenhum dispositivo habilitado.' });
