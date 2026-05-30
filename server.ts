@@ -190,7 +190,8 @@ async function sendWhatsAppNotification(resident: ServerResident, reservation: S
   if (!config.enabled || !resident.phone) return;
 
   const phone = resident.phone.replace(/\D/g, '');
-  const normalizedPhone = phone.length <= 11 ? '55' + phone : phone;
+  // Garante prefixo 55 (Brasil) sem duplicar — números com DDD têm 10-11 dígitos
+  const normalizedPhone = phone.startsWith('55') ? phone : '55' + phone;
   const message = fillWhatsAppTemplate(config.templateText, resident, reservation);
 
   try {
@@ -412,58 +413,57 @@ async function startServer() {
     }
   });
 
-  // Resident Login
+  // Resident Login — usa username diretamente
   app.post('/api/residents/login', async (req, res) => {
-    const { apartment, password } = req.body;
-    const block = req.body.block || 'Único';
-    if (!apartment || !password) {
-      return res.status(400).json({ error: 'Todos os campos são obrigatórios!' });
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuário e senha são obrigatórios.' });
     }
     try {
-      const resident = await pbAdmin.collection('residents').getFirstListItem(
-        `apartment="${apartment.trim()}" && block="${block.trim()}"`
-      ) as unknown as ServerResident;
-      if (!resident) {
-        return res.status(404).json({ error: 'Apartamento não cadastrado.', needsSignup: true });
-      }
-      // Usa o username real do registro; se estiver vazio (registro antigo), usa o padrão atual.
-      const realUsername = (resident as any).username ||
-        `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`;
+      // Autentica com o username fornecido
+      let authRecord: any;
       try {
-        await pbAdmin.collection('residents').authWithPassword(realUsername, password);
+        const authResult = await pbAdmin.collection('residents').authWithPassword(username.trim().toLowerCase(), password);
+        authRecord = authResult.record;
       } catch {
-        return res.status(401).json({ error: 'Senha incorreta.' });
+        return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
       }
-      const { password: _, ...safeResident } = resident as any;
+      // Buscar o registro completo com todos os campos
+      const resident = await pbAdmin.collection('residents').getOne(authRecord.id) as unknown as ServerResident;
+      const rec = resident as any;
+      rec.photoDataUrl = residentPhotoDataUrl(rec);
+      const { password: _, ...safeResident } = rec;
       res.json(safeResident);
     } catch (err: any) {
-      res.status(404).json({ error: 'Apartamento não cadastrado.', needsSignup: true });
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Resident Signup
+  // Resident Signup — username escolhido pelo morador
   app.post('/api/residents/signup', async (req, res) => {
-    const { name, apartment, password, phone } = req.body;
+    const { name, username, apartment, password, phone } = req.body;
     const block = req.body.block || 'Único';
-    if (!name || !apartment || !password) {
-      return res.status(400).json({ error: 'Todos os campos são obrigatórios!' });
+    if (!name || !username || !apartment || !password) {
+      return res.status(400).json({ error: 'Nome, usuário, apartamento e senha são obrigatórios.' });
     }
+    const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '');
+    if (!cleanUsername) return res.status(400).json({ error: 'Usuário inválido.' });
     try {
-      const existing = await pbAdmin.collection('residents').getFirstListItem(
-        `apartment="${apartment.trim()}" && block="${block.trim()}"`
+      // Verificar se username já existe
+      const existingUser = await pbAdmin.collection('residents').getFirstListItem(
+        `username="${cleanUsername}"`
       ).catch(() => null);
-      if (existing) {
-        return res.status(400).json({ error: 'Este apartamento já possui um cadastro ativo.' });
+      if (existingUser) {
+        return res.status(400).json({ error: 'Este nome de usuário já está em uso. Escolha outro.' });
       }
-      const resUsername = `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`;
       const created = await pbAdmin.collection('residents').create({
-        username: resUsername,
-        email: `${resUsername}@mhvl.local`,
+        username: cleanUsername,
+        email: `${cleanUsername}@mhvl.local`,
         password,
         passwordConfirm: password,
         name: name.trim(),
         apartment: apartment.trim(),
-        block: block.trim(),
+        block: block.trim() || 'Único',
         phone: phone ? phone.trim() : '',
         registeredAt: new Date().toISOString(),
         syncStatus: 'pending',
@@ -618,13 +618,42 @@ async function startServer() {
     }
   });
 
-  // Reset resident password (called by Admin)
+  // Reset resident password + optionally set username (called by Admin)
   app.post('/api/residents/reset-password', async (req, res) => {
-    const { id, newPassword } = req.body;
+    const { id, newPassword, newUsername } = req.body;
     if (!id || !newPassword || newPassword.length < 4) return res.status(400).json({ error: 'ID e nova senha (mínimo 4 caracteres) são obrigatórios.' });
     try {
-      await pbAdmin.collection('residents').update(id, { password: newPassword, passwordConfirm: newPassword });
-      res.json({ success: true, message: 'Senha do morador redefinida com sucesso.' });
+      const updateData: any = { password: newPassword, passwordConfirm: newPassword };
+      if (newUsername) {
+        const cleanUsername = newUsername.trim().toLowerCase().replace(/\s+/g, '');
+        updateData.username = cleanUsername;
+        updateData.email = `${cleanUsername}@mhvl.local`;
+      }
+      await pbAdmin.collection('residents').update(id, updateData);
+      res.json({ success: true, message: 'Credenciais do morador redefinidas com sucesso.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Migrate old residents: fill empty username from apt+block pattern
+  app.post('/api/residents/migrate-usernames', async (req, res) => {
+    try {
+      const records = await pbAdmin.collection('residents').getFullList();
+      const results: string[] = [];
+      for (const rec of records) {
+        const r = rec as any;
+        if (!r.username) {
+          const newUsername = `apt${r.apartment}_bloco${(r.block || 'Único').replace(/\s+/g, '')}`;
+          const cleanUsername = newUsername.toLowerCase();
+          await pbAdmin.collection('residents').update(r.id, {
+            username: cleanUsername,
+            email: `${cleanUsername}@mhvl.local`,
+          });
+          results.push(`${r.name} → username: ${cleanUsername}`);
+        }
+      }
+      res.json({ migrated: results.length, results });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1124,7 +1153,7 @@ async function startServer() {
       return res.status(400).json({ error: 'WhatsApp não está conectado. Escaneie o QR Code primeiro.' });
     }
     const normalizedPhone = phone.replace(/\D/g, '');
-    const phoneWithCountry = normalizedPhone.length <= 11 ? '55' + normalizedPhone : normalizedPhone;
+    const phoneWithCountry = normalizedPhone.startsWith('55') ? normalizedPhone : '55' + normalizedPhone;
     try {
       await waClient.sendText(phoneWithCountry, '✅ *Teste de Notificação*\n\nSeu WhatsApp está configurado corretamente no sistema do condomínio!');
       res.json({ success: true, message: 'Mensagem de teste enviada!' });

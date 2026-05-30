@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { User, Home, Lock, KeyRound, Building2 } from 'lucide-react';
+import { User, Home, Lock, Phone, Building2 } from 'lucide-react';
 import { Resident } from '../types';
 
 interface ResidentAuthProps {
@@ -17,7 +17,9 @@ interface ResidentAuthProps {
 export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmployeeInitiate }: ResidentAuthProps) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [apartment, setApartment] = useState('');
+  const [block, setBlock] = useState('Único');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
@@ -28,15 +30,23 @@ export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmploy
     setError('');
     setLoading(true);
 
-    if (isSignUp && (!name.trim() || !phone.trim())) {
-      setError('Nome e telefone são obrigatórios para o cadastro.');
-      setLoading(false);
-      return;
-    }
-    if (!apartment.trim() || !password.trim()) {
-      setError('Todos os campos marcados são obrigatórios.');
-      setLoading(false);
-      return;
+    if (isSignUp) {
+      if (!name.trim() || !username.trim() || !apartment.trim() || !password.trim()) {
+        setError('Nome, usuário, apartamento e senha são obrigatórios.');
+        setLoading(false);
+        return;
+      }
+      if (username.trim().includes(' ')) {
+        setError('O nome de usuário não pode conter espaços.');
+        setLoading(false);
+        return;
+      }
+    } else {
+      if (!username.trim() || !password.trim()) {
+        setError('Usuário e senha são obrigatórios.');
+        setLoading(false);
+        return;
+      }
     }
 
     try {
@@ -45,20 +55,17 @@ export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmploy
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: name,
+          name: name.trim(),
+          username: username.trim().toLowerCase(),
           apartment: apartment.trim(),
-          block: 'Único',
-          password: password,
+          block: block.trim() || 'Único',
+          password,
           phone: phone.trim(),
         }),
       });
 
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Ocorreu um erro no servidor.');
-      }
-
+      if (!response.ok) throw new Error(data.error || 'Ocorreu um erro no servidor.');
       onLoginSuccess(data);
     } catch (err: any) {
       setError(err.message || 'Erro de conexão.');
@@ -106,78 +113,66 @@ export default function ResidentAuth({ onLoginSuccess, onAdminInitiate, onEmploy
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               {isSignUp && (
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Nome Completo</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50"><User size={18} /></span>
+                    <input type="text" value={name} onChange={e => setName(e.target.value)}
+                      placeholder="Seu nome completo"
+                      className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500" required />
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Usuário</label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50"><User size={18} /></span>
+                  <input id="resident-auth-username" type="text" value={username} onChange={e => setUsername(e.target.value)}
+                    placeholder={isSignUp ? "Crie seu usuário (sem espaços)" : "Seu usuário"}
+                    className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500" required />
+                </div>
+              </div>
+
+              {isSignUp && (
                 <>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Nome Completo</label>
-                    <div className="relative">
-                      <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50">
-                        <User size={18} />
-                      </span>
-                      <input
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="Seu nome"
-                        className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500"
-                        required
-                      />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Apartamento</label>
+                      <div className="relative">
+                        <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50"><Home size={16} /></span>
+                        <input type="text" value={apartment} onChange={e => setApartment(e.target.value)}
+                          placeholder="Ex: 1301"
+                          className="w-full pl-10 pr-3 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500" required />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Bloco</label>
+                      <input type="text" value={block} onChange={e => setBlock(e.target.value)}
+                        placeholder="Único"
+                        className="w-full px-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500" />
                     </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Telefone</label>
+                    <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Telefone / WhatsApp</label>
                     <div className="relative">
-                      <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50">
-                        <User size={18} />
-                      </span>
-                      <input
-                        type="tel"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50"><Phone size={18} /></span>
+                      <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
                         placeholder="(00) 00000-0000"
-                        className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500"
-                        required
-                      />
+                        className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500" />
                     </div>
                   </div>
                 </>
               )}
 
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">
-                  {isSignUp ? 'Apartamento' : 'Usuário'}
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50">
-                    <Home size={18} />
-                  </span>
-                  <input
-                    id="resident-auth-apartment"
-                    type="text"
-                    value={apartment}
-                    onChange={(e) => setApartment(e.target.value)}
-                    placeholder={isSignUp ? "Ex: 101-A" : "Seu usuário"}
-                    className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-blue-300 uppercase tracking-widest block font-display">Senha</label>
                 <div className="relative">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50">
-                    <Lock size={18} />
-                  </span>
-                  <input
-                    id="resident-auth-password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-blue-400/50"><Lock size={18} /></span>
+                  <input id="resident-auth-password" type="password" value={password} onChange={e => setPassword(e.target.value)}
                     placeholder="Digite sua senha"
-                    className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500"
-                    required
-                  />
+                    className="w-full pl-12 pr-4 py-3.5 bg-[#020617]/50 border border-white/5 rounded-2xl text-sm focus:outline-none focus:border-blue-500/50 transition-all text-white placeholder-zinc-500" required />
                 </div>
               </div>
             </div>

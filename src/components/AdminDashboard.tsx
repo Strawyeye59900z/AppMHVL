@@ -73,6 +73,7 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
   const [resettingEmployeeId, setResettingEmployeeId] = useState<string | null>(null);
   const [resettingResidentId, setResettingResidentId] = useState<string | null>(null);
   const [residentResetPassword, setResidentResetPassword] = useState('');
+  const [residentResetUsername, setResidentResetUsername] = useState('');
   const [sharedDriveInfo, setSharedDriveInfo] = useState<{ email?: string; expiresAt?: string } | null>(null);
 
   // Employees administration states and actions
@@ -642,27 +643,29 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
   };
 
   // Reset resident password
-  const handleResetResidentPassword = async (id: string, newPassword: string) => {
+  const handleResetResidentPassword = async (id: string, newPassword: string, newUsername?: string) => {
     try {
       const res = await fetch('/api/residents/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, newPassword }),
+        body: JSON.stringify({ id, newPassword, newUsername: newUsername || undefined }),
       });
       const data = await res.json();
       if (res.ok) {
-        setAdminSuccess('Senha do morador redefinida com sucesso!');
+        setAdminSuccess('Credenciais do morador redefinidas com sucesso!');
         setTimeout(() => setAdminSuccess(''), 4000);
+        await fetchResidents();
       } else {
-        setAdminError(data.error || 'Erro ao redefinir senha.');
+        setAdminError(data.error || 'Erro ao redefinir credenciais.');
         setTimeout(() => setAdminError(''), 4000);
       }
     } catch {
-      setAdminError('Erro de conexão ao redefinir senha.');
+      setAdminError('Erro de conexão ao redefinir credenciais.');
       setTimeout(() => setAdminError(''), 4000);
     } finally {
       setResettingResidentId(null);
       setResidentResetPassword('');
+      setResidentResetUsername('');
     }
   };
 
@@ -1844,23 +1847,32 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
                 <KeyRound size={24} />
                 <h3 className="font-display font-bold text-base text-white">Redefinir Senha do Morador</h3>
               </div>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                {residents.find(r => r.id === resettingResidentId)?.name} — Apto {residents.find(r => r.id === resettingResidentId)?.apartment}
-              </p>
-              <input
-                type="password"
-                value={residentResetPassword}
-                onChange={e => setResidentResetPassword(e.target.value)}
-                placeholder="Nova senha (mín. 4 caracteres)"
-                className="bg-dark-input border border-dark-border rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-yellow-500 placeholder-zinc-600"
-              />
+              {(() => { const r = residents.find(x => x.id === resettingResidentId); return r ? (
+                <p className="text-xs text-zinc-400">{r.name} — Apto {r.apartment} / {r.block || 'Único'}</p>
+              ) : null; })()}
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={residentResetUsername}
+                  onChange={e => setResidentResetUsername(e.target.value)}
+                  placeholder="Novo usuário (opcional — deixe vazio para manter)"
+                  className="w-full bg-dark-input border border-dark-border rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-yellow-500 placeholder-zinc-600"
+                />
+                <input
+                  type="password"
+                  value={residentResetPassword}
+                  onChange={e => setResidentResetPassword(e.target.value)}
+                  placeholder="Nova senha (mín. 4 caracteres)"
+                  className="w-full bg-dark-input border border-dark-border rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-yellow-500 placeholder-zinc-600"
+                />
+              </div>
               <div className="flex gap-2 justify-end">
                 <button
-                  onClick={() => { setResettingResidentId(null); setResidentResetPassword(''); }}
+                  onClick={() => { setResettingResidentId(null); setResidentResetPassword(''); setResidentResetUsername(''); }}
                   className="px-4 py-2 bg-dark-input hover:bg-dark-hover border border-dark-border text-xs font-semibold text-zinc-400 rounded-lg cursor-pointer transition-colors"
                 >Cancelar</button>
                 <button
-                  onClick={() => residentResetPassword.length >= 4 && handleResetResidentPassword(resettingResidentId!, residentResetPassword)}
+                  onClick={() => residentResetPassword.length >= 4 && handleResetResidentPassword(resettingResidentId!, residentResetPassword, residentResetUsername || undefined)}
                   disabled={residentResetPassword.length < 4}
                   className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-xs font-semibold text-white rounded-lg cursor-pointer transition-colors flex items-center gap-1 disabled:opacity-40"
                 >
