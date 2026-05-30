@@ -262,7 +262,25 @@ async function ensureFaceLib(base: string, client: any): Promise<string> {
   return '1';
 }
 
-async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: string; collectionId?: string }, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
+// Delete a person from a Hikvision terminal by their derived personId
+async function deleteFromHikvision(personDbId: string, device: ServerHikvisionDevice): Promise<void> {
+  const base = `http://${device.deviceIp}:${device.port}`;
+  const client = hikFetch(device.username, device.password);
+  const personId = (parseInt(personDbId.replace(/\D/g, '').slice(0, 9), 10) || Math.abs(hashCode(personDbId))).toString();
+  try {
+    await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Delete?format=json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ UserInfoDelCond: { EmployeeNoList: [{ employeeNo: personId }] } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    console.log(`[Hikvision] Deleted person ${personId} from ${device.name}`);
+  } catch (err: any) {
+    console.warn(`[Hikvision] Delete failed for ${personId} on ${device.name}: ${err.message}`);
+  }
+}
+
+async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: string; collectionId?: string }, device: ServerHikvisionDevice, endTime?: string): Promise<HikvisionFaceSyncStatus> {
   let photoBuffer: Buffer | null = null;
 
   // Prioridade: campo binário "photo" no PocketBase → URL interna (acessível no servidor)
@@ -300,11 +318,14 @@ async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: st
 
   try {
     // 1. Criar/atualizar pessoa no terminal com permissão de acesso à porta
+    const hikEndTime = endTime
+      ? new Date(endTime).toISOString().replace('T', ' ').slice(0, 19)  // "2026-12-31 23:59:59"
+      : '2037-12-31 23:59:59';
     const userInfo = {
       employeeNo: personId,
       name: resident.name.substring(0, 32),
       userType: 'normal',
-      Valid: { enable: true, beginTime: '2000-01-01T00:00:00', endTime: '2037-12-31T23:59:59', timeType: 'local' },
+      Valid: { enable: true, beginTime: '2000-01-01 00:00:00', endTime: hikEndTime, timeType: 'local' },
       doorRight: '1',
       RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
     };
@@ -386,12 +407,21 @@ async function syncResidentToAllHikvisionDevices(residentId: string): Promise<vo
   const rawStatus = (resident as any).hikvisionSyncStatus;
   const hikvisionSyncStatus: Record<string, HikvisionFaceSyncStatus> =
     typeof rawStatus === 'string' ? (JSON.parse(rawStatus) || {}) : (rawStatus || {});
+
+  let allSynced = true;
   for (const device of devices) {
     const result = await syncFaceToHikvisionServer(resident, device);
     hikvisionSyncStatus[device.id] = result;
+    if (result.status !== 'synced') allSynced = false;
     console.log(`Hikvision sync [${device.name}] resident ${resident.name}: ${result.status}`);
   }
-  await pbAdmin.collection('residents').update(residentId, { hikvisionSyncStatus: JSON.stringify(hikvisionSyncStatus) });
+
+  // Atualiza status automaticamente sem precisar de confirmação manual do síndico
+  await pbAdmin.collection('residents').update(residentId, {
+    hikvisionSyncStatus: JSON.stringify(hikvisionSyncStatus),
+    syncStatus: allSynced ? 'synced' : 'pending',
+    deviceRegistered: allSynced,
+  });
 }
 
 async function startServer() {
@@ -675,6 +705,11 @@ async function startServer() {
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'ID do morador é obrigatório.' });
     try {
+      // Remove dos terminais Hikvision antes de deletar do banco
+      const devices = ((await pbSetting('hikvision_devices')) || []).filter((d: ServerHikvisionDevice) => d.enabled);
+      for (const device of devices) {
+        await deleteFromHikvision(id, device);
+      }
       await pbAdmin.collection('residents').delete(id);
       res.json({ success: true, message: 'Morador removido com sucesso.' });
     } catch (err: any) {
@@ -1462,16 +1497,15 @@ async function startServer() {
     try {
       // Use raw fetch against PocketBase REST API to bypass SDK quirks
       const token = pbAdmin.authStore.token;
-      const pbUrl = `${POCKETBASE_URL}/api/collections/serviceProviders/records?perPage=500`;
-      console.log(`[Providers] Fetching: ${pbUrl} token=${token ? 'ok' : 'MISSING'}`);
-      const pbRes = await fetch(pbUrl, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
+      const pbUrl = `${POCKETBASE_URL}/api/collections/serviceProviders/records?perPage=500&sort=-id`;
+      const pbRes = await fetch(pbUrl, { headers: { 'Authorization': `Bearer ${token}` } });
       const pbBody = await pbRes.json();
-      console.log(`[Providers] PB response status=${pbRes.status} body=${JSON.stringify(pbBody).slice(0, 300)}`);
       if (!pbRes.ok) {
-        return res.status(500).json({ error: 'PocketBase error: ' + JSON.stringify(pbBody) });
+        // Log first item fields if available to help debug schema
+        console.error(`[Providers] PB error ${pbRes.status}:`, JSON.stringify(pbBody));
+        return res.status(500).json({ error: 'PocketBase error: ' + (pbBody.message || JSON.stringify(pbBody)) });
       }
+      console.log(`[Providers] PB ok, totalItems=${pbBody.totalItems}`);
       const allRecords: any[] = pbBody.items || [];
       const records = residentId
         ? allRecords.filter((r: any) => r.residentId === residentId)
@@ -1630,7 +1664,8 @@ async function startServer() {
           };
           const syncResults: Record<string, HikvisionFaceSyncStatus> = {};
           for (const device of enabledDevices) {
-            syncResults[device.id] = await syncFaceToHikvisionServer(fakeResident, device);
+            // Passa o accessExpiry como endTime para o terminal respeitar a validade
+            syncResults[device.id] = await syncFaceToHikvisionServer(fakeResident, device, provider.accessExpiry);
           }
           await pbAdmin.collection('serviceProviders').update(provider.id, {
             hikvisionSyncStatus: JSON.stringify(syncResults),
@@ -1692,7 +1727,7 @@ async function startServer() {
 
       const syncResults: Record<string, HikvisionFaceSyncStatus> = {};
       for (const device of enabledDevices) {
-        syncResults[device.id] = await syncFaceToHikvisionServer(fakeResident, device);
+        syncResults[device.id] = await syncFaceToHikvisionServer(fakeResident, device, record.accessExpiry);
       }
       await pbAdmin.collection('serviceProviders').update(providerId, {
         hikvisionSyncStatus: JSON.stringify(syncResults),
@@ -1708,6 +1743,11 @@ async function startServer() {
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'ID é obrigatório.' });
     try {
+      // Remove dos terminais Hikvision antes de deletar do banco
+      const devices = ((await pbSetting('hikvision_devices')) || []).filter((d: ServerHikvisionDevice) => d.enabled);
+      for (const device of devices) {
+        await deleteFromHikvision(id, device);
+      }
       await pbAdmin.collection('serviceProviders').delete(id);
       res.json({ success: true });
     } catch (err: any) {
