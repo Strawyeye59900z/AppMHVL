@@ -391,8 +391,10 @@ async function startServer() {
         return res.status(404).json({ error: 'Apartamento não cadastrado.', needsSignup: true });
       }
       // PocketBase auth collections store hashed passwords — use authWithPassword
+      // username segue o padrão: apt{apartment}_bloco{block} (sem espaços)
+      const username = `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`;
       try {
-        await pbAdmin.collection('residents').authWithPassword(apartment.trim(), password);
+        await pbAdmin.collection('residents').authWithPassword(username, password);
       } catch {
         return res.status(401).json({ error: 'Senha incorreta.' });
       }
@@ -418,7 +420,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Este apartamento já possui um cadastro ativo.' });
       }
       const created = await pbAdmin.collection('residents').create({
-        username: apartment.trim(),
+        username: `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`,
         password,
         passwordConfirm: password,
         name: name.trim(),
