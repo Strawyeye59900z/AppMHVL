@@ -20,39 +20,37 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, o
   const [activeSubTab, setActiveSubTab] = useState<'me' | 'packages'>(initialTab);
   useEffect(() => { setActiveSubTab(initialTab); }, [initialTab]);
 
-  // Live status — polled from server independently of the resident prop
-  const [syncStatus, setSyncStatus] = useState(resident.syncStatus);
-  const [deviceRegistered, setDeviceRegistered] = useState(!!resident.deviceRegistered);
-  const doneRef = React.useRef(false);
+  // Derive status from hikvision/sync-status — same source as the admin Hikvision panel
+  const [hikSynced, setHikSynced] = useState(false);
+  const [hikHasDevices, setHikHasDevices] = useState(false);
 
-  const checkStatus = React.useCallback(async () => {
-    if (doneRef.current) return;
+  const checkHikStatus = React.useCallback(async () => {
     try {
-      const res = await fetch(`/api/residents/status/${resident.id}`);
+      const res = await fetch('/api/hikvision/sync-status');
       if (!res.ok) return;
       const data = await res.json();
-      setSyncStatus(data.syncStatus);
-      setDeviceRegistered(!!data.deviceRegistered);
-      if (data.syncStatus === 'synced' && data.deviceRegistered) {
-        doneRef.current = true;
-        if (onResidentUpdated) {
-          onResidentUpdated({ ...resident, syncStatus: data.syncStatus, deviceRegistered: data.deviceRegistered });
-        }
-      }
+      const enabledDevices: { id: string }[] = (data.devices || []).filter((d: any) => d.enabled);
+      setHikHasDevices(enabledDevices.length > 0);
+      if (enabledDevices.length === 0) return;
+      const me = (data.residents || []).find((r: any) => r.id === resident.id);
+      if (!me) return;
+      const synced = enabledDevices.every(
+        d => me.hikvisionSyncStatus?.[d.id]?.status === 'synced'
+      );
+      setHikSynced(synced);
     } catch { /* ignore */ }
   }, [resident.id]);
 
   useEffect(() => {
-    doneRef.current = false;
-    checkStatus(); // immediate check on mount
-    const interval = setInterval(checkStatus, 5000);
+    checkHikStatus();
+    const interval = setInterval(checkHikStatus, 6000);
     return () => clearInterval(interval);
   }, [resident.id]);
 
   const [packages, setPackages] = useState<any[]>([]);
   const [loadingPackages, setLoadingPackages] = useState(false);
 
-  const isSync = syncStatus === 'synced';
+  const isSync = hikSynced;
 
   const fetchPackages = async () => {
     setLoadingPackages(true);
@@ -189,17 +187,21 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, o
                 </div>
                 <div className="flex-1 min-w-0">
                   <h4 className="text-xs font-semibold text-zinc-300">Status no Aparelho da Entrada</h4>
-                  {deviceRegistered ? (
+                  {hikSynced ? (
                     <p className="text-xs text-emerald-400 font-medium leading-relaxed mt-1">
-                      ✔ Cadastrado no dispositivo físico! Seu rosto já está ativo no leitor do reconhecimento facial do portão principal.
+                      ✔ Cadastrado no terminal! Seu rosto já está ativo no leitor de reconhecimento facial da entrada.
+                    </p>
+                  ) : !hikHasDevices ? (
+                    <p className="text-xs text-zinc-500 font-medium leading-relaxed mt-1">
+                      Nenhum terminal configurado pelo administrador.
                     </p>
                   ) : (
                     <div className="mt-1.5 p-2 bg-amber-950/25 border border-amber-900/20 rounded-xl">
-                      <p className="text-[11px] text-amber-400 font-semibold leading-relaxed">
-                        Aguardando sincronização com o terminal...
+                      <p className="text-[11px] text-amber-400 font-semibold leading-relaxed flex items-center gap-1.5">
+                        <RefreshCw size={10} className="animate-spin shrink-0" /> Sincronizando com o terminal...
                       </p>
                       <p className="text-[10px] text-zinc-400 leading-normal mt-0.5 font-sans">
-                        Sua foto está sendo processada. Esta tela atualizará automaticamente quando concluído.
+                        Esta tela atualizará automaticamente quando concluído.
                       </p>
                     </div>
                   )}
