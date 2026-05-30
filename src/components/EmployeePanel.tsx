@@ -5,7 +5,31 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Package, Clock, CheckCircle, Plus, Search, LogOut, Check, Building, FileText, User } from 'lucide-react';
+import { Package, Clock, CheckCircle, Plus, Search, LogOut, Check, FileText } from 'lucide-react';
+
+const TIPOS = ['Caixa', 'Envelope', 'Sacola'];
+const ORIGENS = ['Mercado Livre', 'Amazon', 'iFood', 'Shopee', 'Correios', 'Outros'];
+
+function BotaoSelecao({ opcoes, valor, onChange }: { opcoes: string[]; valor: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {opcoes.map((op) => (
+        <button
+          key={op}
+          type="button"
+          onClick={() => onChange(op === valor ? '' : op)}
+          className={`px-3 py-1.5 rounded-full border text-[11px] font-semibold transition-colors cursor-pointer ${
+            valor === op
+              ? 'bg-blue-500 text-white border-blue-500'
+              : 'bg-dark-input border-dark-border text-zinc-400 hover:border-blue-500/50 hover:text-zinc-200'
+          }`}
+        >
+          {op}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 interface PackageItem {
   id: string;
@@ -34,8 +58,9 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
 
   // Form Fields
   const [apartment, setApartment] = useState('');
-  const [recipientName, setRecipientName] = useState('');
-  const [description, setDescription] = useState('');
+  const [tipo, setTipo] = useState('');
+  const [origem, setOrigem] = useState('');
+  const [origemCustom, setOrigemCustom] = useState('');
 
   // Deliver modal state
   const [deliveringPackage, setDeliveringPackage] = useState<PackageItem | null>(null);
@@ -80,13 +105,21 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
     return () => clearInterval(interval);
   }, []);
 
+  function buildDescription() {
+    const partes: string[] = [];
+    if (tipo) partes.push(tipo);
+    const ori = origem === 'Outros' ? origemCustom.trim() : origem;
+    if (ori) partes.push(ori);
+    return partes.join(' · ') || 'Encomenda';
+  }
+
   const handleAddPackage = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
 
-    if (!apartment.trim() || !description.trim()) {
-      setError('Por favor, digite o apartamento e a descrição da encomenda.');
+    if (!apartment.trim()) {
+      setError('Por favor, digite o número do apartamento.');
       return;
     }
 
@@ -98,8 +131,8 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
         body: JSON.stringify({
           apartment: apartment.trim(),
           block: 'Único',
-          recipientName: recipientName.trim() || 'Qualquer Morador',
-          description: description.trim(),
+          recipientName: 'Qualquer Morador',
+          description: buildDescription(),
           receivedBy: employee?.name || 'Portaria'
         }),
       });
@@ -110,25 +143,13 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
 
       const newPkg = await response.json();
       setPackages((prev) => [newPkg, ...prev]);
-      
-      // Auto-trigger WhatsApp notification if possible
-      const matchingResident = residents.find(
-        r => r.apartment.toLowerCase() === apartment.trim().toLowerCase() && r.phone
-      );
+      setSuccess('Encomenda registrada! O morador será notificado automaticamente pelo WhatsApp.');
 
-      if (matchingResident) {
-        const messageText = `Olá, ${matchingResident.name}! Sua encomenda (${description.trim()}) acabou de chegar na portaria e está disponível para retirada.`;
-        window.open(`https://wa.me/55${matchingResident.phone.replace(/\D/g, '')}?text=${encodeURIComponent(messageText)}`, '_blank');
-        setSuccess('Encomenda registrada! Abrindo WhatsApp do morador...');
-      } else {
-        setSuccess('Sua encomenda foi cadastrada com sucesso!');
-      }
-
-      // Clear fields
       setApartment('');
-      setRecipientName('');
-      setDescription('');
-      
+      setTipo('');
+      setOrigem('');
+      setOrigemCustom('');
+
       setTimeout(() => setSuccess(''), 4000);
     } catch (err: any) {
       setError(err.message || 'Erro de conexão.');
@@ -254,38 +275,34 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Recebido por (Portaria)</label>
+              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Tipo</label>
+              <BotaoSelecao opcoes={TIPOS} valor={tipo} onChange={setTipo} />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Origem</label>
+              <BotaoSelecao
+                opcoes={ORIGENS}
+                valor={origem}
+                onChange={(v) => { setOrigem(v); if (v !== 'Outros') setOrigemCustom(''); }}
+              />
+              {origem === 'Outros' && (
+                <input
+                  type="text"
+                  value={origemCustom}
+                  onChange={(e) => setOrigemCustom(e.target.value)}
+                  placeholder="Digite a origem..."
+                  autoFocus
+                  className="mt-2 w-full px-3.5 py-2.5 bg-dark-input border border-dark-border rounded-xl text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 text-white placeholder-zinc-600"
+                />
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Recebido por</label>
               <div className="w-full px-3.5 py-2.5 bg-dark-input/50 border border-dark-border rounded-xl text-xs text-zinc-400 font-sans italic">
                 {employee?.name || 'Aguardando login'}
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Nome do Destinatário (Morador)</label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-600">
-                  <User size={14} />
-                </span>
-                <input
-                  type="text"
-                  value={recipientName}
-                  onChange={(e) => setRecipientName(e.target.value)}
-                  placeholder="Ex: Maria Souza (ou deixe vazio)"
-                  className="w-full pl-9 pr-3 py-2 bg-dark-input border border-dark-border rounded-xl text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 text-white placeholder-zinc-600"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Descrição / Pacote *</label>
-              <textarea
-                required
-                rows={3}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Ex: Caixa pequena da Amazon, pacote do Mercado Livre, envelope dos Correios"
-                className="w-full px-3 py-2 bg-dark-input border border-dark-border rounded-xl text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 text-white placeholder-zinc-600 resize-none"
-              />
             </div>
 
             <button

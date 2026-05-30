@@ -1090,6 +1090,31 @@ async function startServer() {
         receivedBy: receivedBy ? receivedBy.trim() : 'Porteiro Principal',
         employeeId: employeeId || '',
       });
+
+      // WhatsApp notification to resident
+      const whatsappConfig = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
+      if (whatsappConfig?.enabled) {
+        const residents = await pbResidents();
+        const resident = residents.find(
+          r => r.apartment.trim().toLowerCase() === apartment.trim().toLowerCase() &&
+               (!block || block.trim() === 'Único' || r.block?.trim().toLowerCase() === block.trim().toLowerCase())
+        );
+        if (resident?.phone) {
+          const phone = resident.phone.replace(/\D/g, '');
+          const normalizedPhone = phone.startsWith('55') ? phone : '55' + phone;
+          const blockStr = block && block.trim() !== 'Único' ? ` / Bloco ${block.trim()}` : '';
+          const message =
+            `📦 *Encomenda Chegou!*\n\n` +
+            `Olá, ${resident.name}! Uma encomenda chegou para você.\n\n` +
+            `🏢 *Unidade:* Apto ${apartment.trim()}${blockStr}\n` +
+            `📝 *Descrição:* ${description.trim()}\n\n` +
+            `Retire na portaria assim que possível.`;
+          waClient.sendText(normalizedPhone, message).catch(err =>
+            console.error('WhatsApp package notification error:', err)
+          );
+        }
+      }
+
       res.status(201).json(newPackage);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
