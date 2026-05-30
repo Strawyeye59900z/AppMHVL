@@ -1095,10 +1095,12 @@ async function startServer() {
       const whatsappConfig = await pbSetting('whatsapp_config') as ServerWhatsAppConfig | null;
       if (whatsappConfig?.enabled) {
         const residents = await pbResidents();
-        const resident = residents.find(
-          r => r.apartment.trim().toLowerCase() === apartment.trim().toLowerCase() &&
-               (!block || block.trim() === 'Único' || r.block?.trim().toLowerCase() === block.trim().toLowerCase())
-        );
+        const blockIsUnique = !block || block.trim() === '' || block.trim().toLowerCase().startsWith('ú') || block.trim().toLowerCase() === 'unico';
+        const resident = residents.find(r => {
+          const aptMatch = r.apartment.trim().toLowerCase() === apartment.trim().toLowerCase();
+          const blockMatch = blockIsUnique || r.block?.trim().toLowerCase() === block.trim().toLowerCase();
+          return aptMatch && blockMatch;
+        });
         if (!resident) console.warn(`[WhatsApp] Morador não encontrado para apto "${apartment}" ao notificar encomenda`);
         const residentPhone = (resident as any)?.whatsapp || resident?.phone;
         if (residentPhone) {
