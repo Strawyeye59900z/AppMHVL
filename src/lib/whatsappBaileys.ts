@@ -110,7 +110,13 @@ class WhatsAppBaileys extends EventEmitter {
     if (this.status !== 'connected' || !this.sock) {
       throw new Error('WhatsApp não está conectado');
     }
-    const jid = phone.replace(/\D/g, '') + '@s.whatsapp.net';
+    const digits = phone.replace(/\D/g, '');
+
+    // Resolve o JID correto via onWhatsApp (lida com variações do 9º dígito BR)
+    const results = await this.sock.onWhatsApp(digits + '@s.whatsapp.net');
+    const resolved = results?.[0];
+    const jid = resolved?.exists ? resolved.jid : digits + '@s.whatsapp.net';
+
     await this.sock.sendMessage(jid, { text: message });
   }
 }
