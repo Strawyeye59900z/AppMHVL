@@ -109,14 +109,20 @@ async function initPocketBase() {
 
 // ---- PocketBase helpers ----
 
+function residentPhotoDataUrl(rec: any): string | undefined {
+  if (rec.photoDataUrl) return rec.photoDataUrl;
+  if (rec.photo) {
+    // Gera URL pública do arquivo no PocketBase acessível pelo browser
+    return `${POCKETBASE_URL}/api/files/${rec.collectionId}/${rec.id}/${rec.photo}`;
+  }
+  return undefined;
+}
+
 async function pbResidents() {
   const records = await pbAdmin.collection('residents').getFullList({ sort: 'apartment' });
-  // Gera photoDataUrl a partir do campo photo (arquivo) se disponível, para retrocompatibilidade
   return records.map(r => {
     const rec = r as any;
-    if (rec.photo && !rec.photoDataUrl) {
-      rec.photoDataUrl = pbAdmin.files.getURL(rec, rec.photo);
-    }
+    rec.photoDataUrl = residentPhotoDataUrl(rec);
     return rec;
   }) as unknown as ServerResident[];
 }
@@ -247,21 +253,18 @@ async function ensureFaceLib(base: string, client: any): Promise<string> {
 async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: string }, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
   let photoBuffer: Buffer | null = null;
 
-  // Tenta ler do campo photo (arquivo binário no PocketBase)
-  if ((resident as any).photo) {
-    try {
-      const photoUrl = pbAdmin.files.getURL(resident as any, (resident as any).photo);
-      const photoRes = await fetch(photoUrl);
-      if (photoRes.ok) {
-        photoBuffer = Buffer.from(await photoRes.arrayBuffer());
-      }
-    } catch { /* fallback para base64 */ }
-  }
-
-  // Fallback: campo photoDataUrl legado (base64)
-  if (!photoBuffer && resident.photoDataUrl) {
-    const match = resident.photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) photoBuffer = Buffer.from(match[2], 'base64');
+  if (resident.photoDataUrl) {
+    if (resident.photoDataUrl.startsWith('http')) {
+      // URL pública de arquivo no PocketBase — baixa via HTTP
+      try {
+        const photoRes = await fetch(resident.photoDataUrl, { signal: AbortSignal.timeout(10000) });
+        if (photoRes.ok) photoBuffer = Buffer.from(await photoRes.arrayBuffer());
+      } catch { /* fallback */ }
+    } else {
+      // Base64 legado
+      const match = resident.photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) photoBuffer = Buffer.from(match[2], 'base64');
+    }
   }
 
   if (!photoBuffer) {
@@ -530,9 +533,12 @@ async function startServer() {
       form.append('deviceRegistered', 'false');
       form.append('hikvisionSyncStatus', JSON.stringify(hikvisionSyncStatus));
       const updated = await pbAdmin.collection('residents').update(id, form);
-      // Devolve também o photoDataUrl gerado dinamicamente para o frontend continuar funcionando
-      const photoUrl = pbAdmin.files.getURL(updated, updated.photo, { thumb: '0x0' });
-      res.json({ ...updated, photoDataUrl: photoUrl || photoDataUrl });
+      // Devolve photoDataUrl como URL pública para o frontend continuar funcionando
+      const updatedRec = updated as any;
+      const publicPhotoUrl = updatedRec.photo
+        ? `${POCKETBASE_URL}/api/files/${updatedRec.collectionId}/${updatedRec.id}/${updatedRec.photo}`
+        : photoDataUrl;
+      res.json({ ...updatedRec, photoDataUrl: publicPhotoUrl });
       if (enabledDevices.length > 0) {
         syncResidentToAllHikvisionDevices(id).catch(err => console.error('Hikvision background sync error:', err));
       }
