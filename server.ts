@@ -1002,15 +1002,25 @@ async function startServer() {
     }
   });
 
-  // Get photo of an employee
+  // Get photo of an employee — proxy para não expor URL interna do PocketBase
   app.get('/api/employees/photo/:id', async (req, res) => {
     try {
       const employee = await pbAdmin.collection('employees').getOne(req.params.id) as any;
-      if (!employee?.photoDataUrl) return res.status(404).send('Photo not found');
-      const matches = employee.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-      if (!matches || matches.length !== 3) return res.status(400).send('Invalid photo format');
-      res.contentType(matches[1]);
-      res.send(Buffer.from(matches[2], 'base64'));
+      if (employee?.photo) {
+        const internalUrl = `${POCKETBASE_URL}/api/files/${employee.collectionId}/${employee.id}/${employee.photo}`;
+        const photoRes = await fetch(internalUrl, { signal: AbortSignal.timeout(10000) });
+        if (!photoRes.ok) return res.status(404).send('Photo not found');
+        res.setHeader('Content-Type', photoRes.headers.get('content-type') || 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.send(Buffer.from(await photoRes.arrayBuffer()));
+      }
+      if (employee?.photoDataUrl) {
+        const matches = employee.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (!matches) return res.status(400).send('Invalid photo format');
+        res.contentType(matches[1]);
+        return res.send(Buffer.from(matches[2], 'base64'));
+      }
+      res.status(404).send('Photo not found');
     } catch {
       res.status(404).send('Photo not found');
     }
@@ -1032,15 +1042,25 @@ async function startServer() {
     }
   });
 
-  // Upload employee photo
+  // Upload employee photo — salva como arquivo binário (campo photo) igual aos moradores
   app.post('/api/employees/upload-photo', async (req, res) => {
     const { id, photoDataUrl } = req.body;
     if (!id || !photoDataUrl) return res.status(400).json({ error: 'ID e foto são obrigatórios.' });
+    const match = photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) return res.status(400).json({ error: 'Formato de foto inválido.' });
+    const photoBuffer = Buffer.from(match[2], 'base64');
     try {
-      const updated = await pbAdmin.collection('employees').update(id, { photoDataUrl });
-      res.json({ success: true, employee: updated });
+      const form = new FormData();
+      form.append('photo', new Blob([photoBuffer], { type: match[1] }), `emp_${id}.jpg`);
+      const updated = await pbAdmin.collection('employees').update(id, form);
+      const updatedRec = updated as any;
+      const publicPhotoUrl = updatedRec.photo
+        ? `/api/employees/photo/${updatedRec.id}`
+        : photoDataUrl;
+      res.json({ success: true, employee: { ...updatedRec, photoDataUrl: publicPhotoUrl } });
     } catch (err: any) {
-      res.status(404).json({ error: 'Funcionário não encontrado.' });
+      console.error('[upload-employee-photo]', err?.response?.data || err?.message);
+      res.status(500).json({ error: err?.response?.message || err?.message });
     }
   });
 
