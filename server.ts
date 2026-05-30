@@ -317,15 +317,16 @@ async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: st
   const personId = (parseInt(resident.id.replace(/\D/g, '').slice(0, 9), 10) || Math.abs(hashCode(resident.id))).toString();
 
   try {
-    // 1. Criar/atualizar pessoa no terminal com permissão de acesso à porta
+    // 1. Criar/atualizar pessoa no terminal
+    // Hikvision espera formato ISO: "2026-12-31T23:59:59" (com T, sem timezone)
     const hikEndTime = endTime
-      ? new Date(endTime).toISOString().replace('T', ' ').slice(0, 19)  // "2026-12-31 23:59:59"
-      : '2037-12-31 23:59:59';
+      ? new Date(endTime).toISOString().slice(0, 19)   // "2026-12-31T23:59:59"
+      : '2037-12-31T23:59:59';
     const userInfo = {
       employeeNo: personId,
       name: resident.name.substring(0, 32),
       userType: 'normal',
-      Valid: { enable: true, beginTime: '2000-01-01 00:00:00', endTime: hikEndTime, timeType: 'local' },
+      Valid: { enable: true, beginTime: '2000-01-01T00:00:00', endTime: hikEndTime, timeType: 'local' },
       doorRight: '1',
       RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
     };
@@ -341,17 +342,22 @@ async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: st
       const errText = await personRes.text();
       const alreadyExists = /statusCode["\s:]*6\b/.test(errText) || /already exist/i.test(errText);
       if (alreadyExists) {
-        // Pessoa já existe — atualiza UserInfo para garantir que RightPlan e doorRight estejam corretos.
-        const modRes = await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Modify?format=json`, {
+        // Pessoa já existe — deletar e recriar para garantir atualização do endTime
+        await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Delete?format=json`, {
           method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ UserInfoDelCond: { EmployeeNoList: [{ employeeNo: personId }] } }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const reCreateRes = await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Record?format=json`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({ UserInfo: userInfo }),
           signal: AbortSignal.timeout(15000),
         });
-        if (!modRes.ok) {
-          const modErr = await modRes.text();
-          // Alguns firmwares não têm /Modify — ignora o erro e segue para a face
-          console.warn(`[Hikvision] Modify falhou (${modRes.status}): ${modErr.substring(0, 120)} — prosseguindo para face`);
+        if (!reCreateRes.ok) {
+          const reErr = await reCreateRes.text();
+          console.warn(`[Hikvision] Recreate falhou (${reCreateRes.status}): ${reErr.substring(0, 120)} — prosseguindo para face`);
         }
       } else {
         return { status: 'failed', error: `Erro ao criar pessoa HTTP ${personRes.status}: ${errText.substring(0, 120)}` };

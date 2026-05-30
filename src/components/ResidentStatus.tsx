@@ -12,19 +12,40 @@ interface ResidentStatusProps {
   resident: Resident;
   onLogout: () => void;
   onCaptureRequest: (member: Resident) => void;
+  onResidentUpdated?: (r: Resident) => void;
   initialTab?: 'me' | 'packages';
 }
 
-export default function ResidentStatus({ resident, onLogout, onCaptureRequest, initialTab = 'me' }: ResidentStatusProps) {
+export default function ResidentStatus({ resident, onLogout, onCaptureRequest, onResidentUpdated, initialTab = 'me' }: ResidentStatusProps) {
   const [activeSubTab, setActiveSubTab] = useState<'me' | 'packages'>(initialTab);
+  useEffect(() => { setActiveSubTab(initialTab); }, [initialTab]);
+
+  // Poll current resident state from server to reflect Hikvision sync status automatically
+  const [liveResident, setLiveResident] = useState<Resident>(resident);
+  useEffect(() => { setLiveResident(resident); }, [resident]);
   useEffect(() => {
-    setActiveSubTab(initialTab);
-  }, [initialTab]);
+    // Only poll while not yet synced/registered
+    if (liveResident.syncStatus === 'synced' && liveResident.deviceRegistered) return;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/residents');
+        if (!res.ok) return;
+        const all: Resident[] = await res.json();
+        const updated = all.find(r => r.id === resident.id);
+        if (!updated) return;
+        setLiveResident(updated);
+        if (onResidentUpdated) onResidentUpdated(updated);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const interval = setInterval(poll, 8000);
+    return () => clearInterval(interval);
+  }, [liveResident.syncStatus, liveResident.deviceRegistered]);
 
   const [packages, setPackages] = useState<any[]>([]);
   const [loadingPackages, setLoadingPackages] = useState(false);
 
-  const isSync = resident.syncStatus === 'synced';
+  const isSync = liveResident.syncStatus === 'synced';
 
   const fetchPackages = async () => {
     setLoadingPackages(true);
@@ -89,11 +110,11 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
               <div className="relative">
                 {/* Symmetrical border styled face border wrapper */}
                 <div className="w-40 h-40 rounded-full border-4 border-dashed border-gold/30 flex items-center justify-center p-1.5 relative overflow-hidden bg-dark-input">
-                  {resident.photoDataUrl ? (
+                  {liveResident.photoDataUrl ? (
                     <img
                       id="resident-face-badge"
-                      src={resident.photoDataUrl}
-                      alt={resident.name}
+                      src={liveResident.photoDataUrl}
+                      alt={liveResident.name}
                       className="w-full h-full rounded-full object-cover scale-x-[-1]"
                       referrerPolicy="no-referrer"
                     />
@@ -118,10 +139,10 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
             </div>
 
             <h2 className="font-display text-2xl font-semibold tracking-tight text-white truncate max-w-full px-2">
-              {resident.name}
+              {liveResident.name}
             </h2>
             <p className="text-xs text-zinc-500 font-mono uppercase tracking-widest mt-2">
-              Apartamento {resident.apartment}
+              Apartamento {liveResident.apartment}
             </p>
 
             <div className="my-6 p-4 bg-dark-input border border-dark-border rounded-xl text-left space-y-3.5">
@@ -145,11 +166,11 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
                   <h4 className="text-xs font-semibold text-zinc-300">Sincronização com o Condomínio</h4>
                   {isSync ? (
                     <p className="text-xs text-emerald-400 font-medium leading-relaxed mt-1">
-                      Perfil ativo! Suas informações e a imagem já foram transferidos para a pasta segura no Google Drive do condomínio.
+                      Perfil ativo! Sua imagem facial está registrada e sincronizada com o sistema do condomínio.
                     </p>
                   ) : (
                     <p className="text-xs text-amber-400 font-medium leading-relaxed mt-1">
-                      Sua foto está pendente de sincronização. O síndico já recebeu os dados e fará a homologação em breve.
+                      Sincronizando com o terminal de acesso... Esta tela atualizará automaticamente.
                     </p>
                   )}
                 </div>
@@ -161,17 +182,17 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
                 </div>
                 <div className="flex-1 min-w-0">
                   <h4 className="text-xs font-semibold text-zinc-300">Status no Aparelho da Entrada</h4>
-                  {resident.deviceRegistered ? (
-                    <p className="text-xs text-emerald-405 font-medium leading-relaxed mt-1">
+                  {liveResident.deviceRegistered ? (
+                    <p className="text-xs text-emerald-400 font-medium leading-relaxed mt-1">
                       ✔ Cadastrado no dispositivo físico! Seu rosto já está ativo no leitor do reconhecimento facial do portão principal.
                     </p>
                   ) : (
-                    <div className="mt-1.5 p-2 bg-red-950/25 border border-red-900/20 rounded-xl">
-                      <p className="text-[11px] text-red-400 font-semibold leading-relaxed">
-                        Pendente no Painel do Portão
+                    <div className="mt-1.5 p-2 bg-amber-950/25 border border-amber-900/20 rounded-xl">
+                      <p className="text-[11px] text-amber-400 font-semibold leading-relaxed">
+                        Aguardando sincronização com o terminal...
                       </p>
                       <p className="text-[10px] text-zinc-400 leading-normal mt-0.5 font-sans">
-                        O síndico precisa autorizar e carregar manualmente sua imagem no painel eletrônico de entrada física do condomínio.
+                        Sua foto está sendo processada. Esta tela atualizará automaticamente quando concluído.
                       </p>
                     </div>
                   )}

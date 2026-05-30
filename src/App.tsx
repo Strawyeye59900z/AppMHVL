@@ -261,6 +261,10 @@ export default function App() {
                         resident={loggedInResident}
                         onLogout={handleResidentLogout}
                         onCaptureRequest={(member) => setCaptureTarget(member)}
+                        onResidentUpdated={(updated) => {
+                          localStorage.setItem('loggedInResident', JSON.stringify(updated));
+                          setLoggedInResident(updated);
+                        }}
                         initialTab={residentView === 'encomendas' ? 'packages' : 'me'}
                       />
                     ) : residentView === 'prestadores' ? (
