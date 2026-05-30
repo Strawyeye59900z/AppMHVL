@@ -1423,6 +1423,260 @@ async function startServer() {
     }
   });
 
+  // ================= SERVICE PROVIDERS =================
+
+  interface ServerServiceProvider {
+    id: string;
+    name: string;
+    serviceType: string;
+    residentId: string;
+    residentName: string;
+    apartment: string;
+    block: string;
+    accessDuration: string;
+    accessExpiry: string;
+    registrationToken: string;
+    tokenExpiry: string;
+    status: 'pending' | 'registered' | 'expired';
+    photo?: string;
+    collectionId?: string;
+    hikvisionSyncStatus?: string;
+    createdAt: string;
+  }
+
+  function providerPhotoUrl(rec: any): string | undefined {
+    if (rec.photo) return `/api/providers/photo/${rec.id}`;
+    return undefined;
+  }
+
+  function accessDurationMs(duration: string): number {
+    const map: Record<string, number> = {
+      '7d': 7, '30d': 30, '90d': 90, '180d': 180, '365d': 365,
+    };
+    return (map[duration] || 30) * 24 * 60 * 60 * 1000;
+  }
+
+  // List all providers for a resident
+  app.get('/api/providers', async (req, res) => {
+    const { residentId } = req.query;
+    if (!residentId) return res.status(400).json({ error: 'residentId é obrigatório.' });
+    try {
+      const records = await pbAdmin.collection('serviceProviders').getFullList({
+        filter: `residentId = "${residentId}"`,
+        sort: '-createdAt',
+      });
+      const providers = records.map((r: any) => ({
+        ...r,
+        photoDataUrl: providerPhotoUrl(r),
+        hikvisionSyncStatus: typeof r.hikvisionSyncStatus === 'string' ? JSON.parse(r.hikvisionSyncStatus || '{}') : (r.hikvisionSyncStatus || {}),
+      }));
+      res.json(providers);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create a provider invitation (generates registration token + WhatsApp link)
+  app.post('/api/providers/invite', async (req, res) => {
+    const { residentId, name, serviceType, accessDuration } = req.body;
+    if (!residentId || !name || !serviceType || !accessDuration) {
+      return res.status(400).json({ error: 'residentId, name, serviceType e accessDuration são obrigatórios.' });
+    }
+    try {
+      const resident = await pbAdmin.collection('residents').getOne(residentId) as unknown as ServerResident;
+      if (!resident) return res.status(404).json({ error: 'Morador não encontrado.' });
+
+      const token = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      const tokenExpiry = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+      const accessExpiry = new Date(Date.now() + accessDurationMs(accessDuration)).toISOString();
+
+      const record = await pbAdmin.collection('serviceProviders').create({
+        name: name.trim(),
+        serviceType: serviceType.trim(),
+        residentId,
+        residentName: resident.name,
+        apartment: resident.apartment,
+        block: resident.block || 'Único',
+        accessDuration,
+        accessExpiry,
+        registrationToken: token,
+        tokenExpiry,
+        status: 'pending',
+      });
+
+      const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:5173';
+      const proto = req.headers['x-forwarded-proto'] || 'http';
+      const registrationUrl = `${proto}://${host}/register/${token}`;
+
+      // Send WhatsApp notification if phone is available and WA is connected
+      const residentPhone = (resident as any).phone || (resident as any).whatsapp;
+      let waSent = false;
+      if (residentPhone) {
+        try {
+          const waStatus = waClient.getStatus();
+          if (waStatus === 'connected') {
+            const durationLabel: Record<string, string> = {
+              '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
+            };
+            const msg = `Olá, *${name}*! 👋\n\nO(a) morador(a) *${resident.name}* (Apto ${resident.apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Vila Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+            // We send to the provider's number if resident's number is being used as proxy —
+            // since we don't have the provider's phone yet, we store the URL for the resident to forward.
+            waSent = false; // Provider number not available yet — resident will share the link
+          }
+        } catch (_) {}
+      }
+
+      res.json({ success: true, provider: record, registrationUrl, waSent });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get provider info by token (public — called by the provider's registration page)
+  app.get('/api/providers/by-token/:token', async (req, res) => {
+    const { token } = req.params;
+    try {
+      const records = await pbAdmin.collection('serviceProviders').getFullList({
+        filter: `registrationToken = "${token}"`,
+      });
+      if (records.length === 0) return res.status(404).json({ error: 'Link inválido ou expirado.' });
+      const provider = records[0] as unknown as ServerServiceProvider;
+      if (new Date(provider.tokenExpiry) < new Date()) {
+        await pbAdmin.collection('serviceProviders').update(provider.id, { status: 'expired' });
+        return res.status(410).json({ error: 'Este link expirou. Peça ao morador que gere um novo convite.' });
+      }
+      if (provider.status === 'registered') {
+        return res.status(409).json({ error: 'Foto já cadastrada. Nenhuma ação necessária.' });
+      }
+      res.json({
+        id: provider.id,
+        name: provider.name,
+        serviceType: provider.serviceType,
+        residentName: provider.residentName,
+        apartment: provider.apartment,
+        block: provider.block,
+        accessExpiry: provider.accessExpiry,
+        status: provider.status,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Upload photo for provider via registration token (public endpoint)
+  app.post('/api/providers/register-photo', async (req, res) => {
+    const { token, photoDataUrl } = req.body;
+    if (!token || !photoDataUrl) return res.status(400).json({ error: 'token e photoDataUrl são obrigatórios.' });
+    try {
+      const records = await pbAdmin.collection('serviceProviders').getFullList({
+        filter: `registrationToken = "${token}"`,
+      });
+      if (records.length === 0) return res.status(404).json({ error: 'Link inválido.' });
+      const provider = records[0] as unknown as ServerServiceProvider;
+      if (new Date(provider.tokenExpiry) < new Date()) {
+        return res.status(410).json({ error: 'Link expirado.' });
+      }
+      if (provider.status === 'registered') {
+        return res.status(409).json({ error: 'Foto já cadastrada.' });
+      }
+
+      // Convert base64 data URL to binary for PocketBase file field
+      const base64Data = photoDataUrl.replace(/^data:image\/\w+;base64,/, '');
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+      const formData = new FormData();
+      const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
+      formData.append('photo', blob, 'photo.jpg');
+      formData.append('status', 'registered');
+
+      await pbAdmin.collection('serviceProviders').update(provider.id, formData);
+
+      // Attempt Hikvision sync automatically
+      try {
+        const allDevices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+        const enabledDevices = allDevices.filter(d => d.enabled);
+        if (enabledDevices.length > 0) {
+          const updatedRecord = await pbAdmin.collection('serviceProviders').getOne(provider.id);
+          const fakeResident: ServerResident & { photo?: string; collectionId?: string } = {
+            id: provider.id,
+            name: provider.name,
+            apartment: provider.apartment,
+            block: provider.block,
+            registeredAt: provider.createdAt,
+            syncStatus: 'pending',
+            firstLogin: false,
+            photo: (updatedRecord as any).photo,
+            collectionId: 'serviceProviders',
+          };
+          const syncResults: Record<string, HikvisionFaceSyncStatus> = {};
+          for (const device of enabledDevices) {
+            syncResults[device.id] = await syncFaceToHikvisionServer(fakeResident, device);
+          }
+          await pbAdmin.collection('serviceProviders').update(provider.id, {
+            hikvisionSyncStatus: JSON.stringify(syncResults),
+          });
+        }
+      } catch (syncErr) {
+        console.error('[ServiceProvider] Hikvision sync error:', syncErr);
+      }
+
+      res.json({ success: true, message: 'Foto cadastrada com sucesso!' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Serve provider photo (proxied from PocketBase)
+  app.get('/api/providers/photo/:id', async (req, res) => {
+    try {
+      const record = await pbAdmin.collection('serviceProviders').getOne(req.params.id) as any;
+      if (!record.photo) return res.status(404).send('No photo');
+      const fileUrl = pbAdmin.files.getURL(record, record.photo);
+      const response = await fetch(fileUrl);
+      if (!response.ok) return res.status(404).send('Photo not found');
+      res.setHeader('Content-Type', response.headers.get('content-type') || 'image/jpeg');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      const arrayBuffer = await response.arrayBuffer();
+      res.send(Buffer.from(arrayBuffer));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete a service provider
+  app.post('/api/providers/delete', async (req, res) => {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'ID é obrigatório.' });
+    try {
+      await pbAdmin.collection('serviceProviders').delete(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Send WhatsApp message with the registration link to a phone number
+  app.post('/api/providers/send-whatsapp', async (req, res) => {
+    const { phone, providerName, residentName, apartment, registrationUrl, accessDuration } = req.body;
+    if (!phone || !registrationUrl) return res.status(400).json({ error: 'phone e registrationUrl são obrigatórios.' });
+    try {
+      const waStatus = waClient.getStatus();
+      if (waStatus !== 'connected') return res.status(503).json({ error: 'WhatsApp não está conectado.' });
+      const durationLabel: Record<string, string> = {
+        '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
+      };
+      const msg = `Olá, *${providerName}*! 👋\n\nO(a) morador(a) *${residentName}* (Apto ${apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Vila Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+
+      // Normalise phone number (add Brazil country code if missing)
+      let normalised = phone.replace(/\D/g, '');
+      if (!normalised.startsWith('55')) normalised = '55' + normalised;
+
+      await waClient.sendText(normalised, msg);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ================= VITE OR STATIC SERVING =================
 
   if (process.env.NODE_ENV !== 'production') {

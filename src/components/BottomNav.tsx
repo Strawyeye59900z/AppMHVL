@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Calendar, Users, Package } from 'lucide-react';
+import { Home, Calendar, Package, Briefcase } from 'lucide-react';
 
 interface BottomNavProps {
   activeTab: string;
@@ -11,7 +11,7 @@ export default function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
     { id: 'inicio', label: 'Início', icon: Home },
     { id: 'reservar', label: 'Reservar', icon: Calendar },
     { id: 'encomendas', label: 'Encomendas', icon: Package },
-    { id: 'family', label: 'Família', icon: Users },
+    { id: 'prestadores', label: 'Prestadores', icon: Briefcase },
   ];
 
   return (

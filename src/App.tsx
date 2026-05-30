@@ -5,7 +5,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Building, Lock, Package, User } from 'lucide-react';
+import { Building, Package, User } from 'lucide-react';
 import { Resident } from './types';
 import ResidentAuth from './components/ResidentAuth';
 import CameraCapture from './components/CameraCapture';
@@ -15,8 +15,16 @@ import ReservationSection from './components/ReservationSection';
 import ResidentReservationsSidePanel from './components/ResidentReservationsSidePanel';
 import EmployeePanel from './components/EmployeePanel';
 import BottomNav from './components/BottomNav';
+import ServiceProvidersTab from './components/ServiceProvidersTab';
+import ServiceProviderRegistration from './components/ServiceProviderRegistration';
 
 export default function App() {
+  // Detect public registration link (/register/:token in URL)
+  const [providerRegToken] = useState<string | null>(() => {
+    const match = window.location.pathname.match(/^\/register\/([^/]+)$/);
+    return match ? match[1] : null;
+  });
+
   const [activeTab, setActiveTabRaw] = useState<'resident' | 'admin' | 'employee'>(() => {
     const saved = localStorage.getItem('activeTab');
     if (saved === 'admin' && localStorage.getItem('adminSession')) return 'admin';
@@ -27,7 +35,7 @@ export default function App() {
     else localStorage.setItem('activeTab', tab);
     setActiveTabRaw(tab);
   };
-  const [residentView, setResidentView] = useState<'inicio' | 'reservar' | 'encomendas' | 'family'>('inicio');
+  const [residentView, setResidentView] = useState<'inicio' | 'reservar' | 'encomendas' | 'prestadores'>('inicio');
   const [loggedInResident, setLoggedInResident] = useState<Resident | null>(null);
   const [captureTarget, setCaptureTarget] = useState<Resident | null>(null);
   // Admin session lives here (lifted from AdminDashboard) so that re-renders or
@@ -190,9 +198,14 @@ export default function App() {
     }
   }, []);
 
+  // Public provider registration page — no login needed
+  if (providerRegToken) {
+    return <ServiceProviderRegistration token={providerRegToken} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#020617] text-[#E4E4E7] flex flex-col font-sans">
-      
+
       {/* GLOBAL NAVIGATION HEADER */}
       {!(activeTab === 'resident' && !loggedInResident) && (
         <header className="border-b border-white/5 bg-[#0f172a]/20 backdrop-blur-md sticky top-0 z-40 select-none">
@@ -242,15 +255,16 @@ export default function App() {
                   
                   {/* LEFT PRIMARY PANEL CONTAINER */}
                   <div className="lg:col-span-8 space-y-6 w-full flex flex-col items-center">
-                    {residentView === 'inicio' || residentView === 'family' || residentView === 'encomendas' ? (
-                      /* RESIDENT STATUS (covers INICIO, FAMILY and ENCOMENDAS) */
-                      <ResidentStatus 
-                        resident={loggedInResident} 
-                        onLogout={handleResidentLogout} 
+                    {residentView === 'inicio' || residentView === 'encomendas' ? (
+                      /* RESIDENT STATUS (covers INICIO and ENCOMENDAS) */
+                      <ResidentStatus
+                        resident={loggedInResident}
+                        onLogout={handleResidentLogout}
                         onCaptureRequest={(member) => setCaptureTarget(member)}
-                        // Pass down the current view so ResidentStatus knows whether to show family, packages or me
-                        initialTab={residentView === 'family' ? 'family' : residentView === 'encomendas' ? 'packages' : 'me'}
+                        initialTab={residentView === 'encomendas' ? 'packages' : 'me'}
                       />
+                    ) : residentView === 'prestadores' ? (
+                      <ServiceProvidersTab resident={loggedInResident} />
                     ) : residentView === 'reservar' ? (
                       <div className="w-full bg-[#121214]/60 rounded-2xl border border-dark-border shadow-xl p-4 sm:p-6 space-y-6">
                         <div className="flex justify-between items-center border-b border-dark-border pb-4 mb-4 select-none">
@@ -431,23 +445,8 @@ export default function App() {
                   </button>
                 </div>
               </div>
-            ) : !employeeSession.photoDataUrl ? (
-              <div className="w-full">
-                <CameraCapture 
-                  entityId={employeeSession.id}
-                  personName={employeeSession.name}
-                  personSubtitle="Porteiro(a)"
-                  uploadUrl="/api/employees/upload-photo"
-                  onCaptureCompleted={(data: any) => {
-                    const empData = data.employee || data;
-                    setEmployeeSession(empData);
-                    fetchAllEmployees();
-                  }}
-                  onCancel={() => setEmployeeSession(null)}
-                />
-              </div>
             ) : (
-              <EmployeePanel 
+              <EmployeePanel
                 employee={employeeSession} 
                 onLogout={() => {
                   setEmployeeSession(null);

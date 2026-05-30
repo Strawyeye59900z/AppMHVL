@@ -91,6 +91,28 @@ async function main() {
   });
   console.log('Created: packages');
 
+  // serviceProviders collection (base)
+  await pb.collections.create({
+    name: 'serviceProviders',
+    type: 'base',
+    fields: [
+      { name: 'name', type: 'text', required: true },
+      { name: 'serviceType', type: 'text', required: true },
+      { name: 'residentId', type: 'text', required: true },
+      { name: 'residentName', type: 'text', required: false },
+      { name: 'apartment', type: 'text', required: false },
+      { name: 'block', type: 'text', required: false },
+      { name: 'accessDuration', type: 'text', required: false },
+      { name: 'accessExpiry', type: 'text', required: false },
+      { name: 'registrationToken', type: 'text', required: true },
+      { name: 'tokenExpiry', type: 'text', required: false },
+      { name: 'status', type: 'text', required: false },
+      { name: 'photo', type: 'file', required: false },
+      { name: 'hikvisionSyncStatus', type: 'json', required: false },
+    ]
+  });
+  console.log('Created: serviceProviders');
+
   // settings collection (base)
   await pb.collections.create({
     name: 'settings',

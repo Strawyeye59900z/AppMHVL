@@ -84,3 +84,21 @@ export interface HikvisionFaceSyncStatus {
   syncedAt?: string;
   error?: string;
 }
+
+export interface ServiceProvider {
+  id: string;
+  name: string;
+  serviceType: string;
+  residentId: string;
+  residentName: string;
+  apartment: string;
+  block: string;
+  accessDuration: '7d' | '30d' | '90d' | '180d' | '365d';
+  accessExpiry: string; // ISO date string
+  registrationToken: string;
+  tokenExpiry: string; // ISO date string (48h from creation)
+  status: 'pending' | 'registered' | 'expired';
+  photoDataUrl?: string;
+  hikvisionSyncStatus?: Record<string, HikvisionFaceSyncStatus>;
+  createdAt: string;
+}

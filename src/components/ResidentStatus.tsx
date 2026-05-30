@@ -3,31 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { LogOut, CheckCircle, Clock, ShieldCheck, Cpu, Users, UserPlus, Trash2, Camera, User, RefreshCw, Package } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
+import { LogOut, CheckCircle, Clock, ShieldCheck, Cpu, Camera, RefreshCw, Package } from 'lucide-react';
 import { Resident } from '../types';
 
 interface ResidentStatusProps {
   resident: Resident;
   onLogout: () => void;
   onCaptureRequest: (member: Resident) => void;
-  initialTab?: 'me' | 'family' | 'packages';
+  initialTab?: 'me' | 'packages';
 }
 
 export default function ResidentStatus({ resident, onLogout, onCaptureRequest, initialTab = 'me' }: ResidentStatusProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'me' | 'family' | 'packages'>(initialTab);
+  const [activeSubTab, setActiveSubTab] = useState<'me' | 'packages'>(initialTab);
   useEffect(() => {
     setActiveSubTab(initialTab);
   }, [initialTab]);
 
-  const [members, setMembers] = useState<Resident[]>([]);
-  const [loadingMembers, setLoadingMembers] = useState(false);
-  const [newMemberName, setNewMemberName] = useState('');
-  const [addingMember, setAddingMember] = useState(false);
-  const [error, setError] = useState('');
-  const [memberToDelete, setMemberToDelete] = useState<Resident | null>(null);
-  
   const [packages, setPackages] = useState<any[]>([]);
   const [loadingPackages, setLoadingPackages] = useState(false);
 
@@ -51,29 +44,8 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
     }
   };
 
-  const fetchMembers = async () => {
-    setLoadingMembers(true);
-    try {
-      const response = await fetch(
-        `/api/residents/apartment-members?apartment=${encodeURIComponent(
-          resident.apartment
-        )}&block=${encodeURIComponent(resident.block || 'Único')}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setMembers(data);
-      }
-    } catch (err) {
-      console.error('Error fetching members:', err);
-    } finally {
-      setLoadingMembers(false);
-    }
-  };
-
   useEffect(() => {
-    if (activeSubTab === 'family') {
-      fetchMembers();
-    } else if (activeSubTab === 'packages') {
+    if (activeSubTab === 'packages') {
       fetchPackages();
     }
   }, [activeSubTab]);
@@ -83,59 +55,6 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
     const interval = setInterval(fetchPackages, 15000);
     return () => clearInterval(interval);
   }, []);
-
-  const handleAddMember = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMemberName.trim()) return;
-    setAddingMember(true);
-    setError('');
-    try {
-      const response = await fetch('/api/residents/add-member', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newMemberName.trim(),
-          apartment: resident.apartment,
-          block: resident.block || 'Único',
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro ao adicionar familiar');
-      }
-      setNewMemberName('');
-      fetchMembers();
-    } catch (err: any) {
-      setError(err.message || 'Falha de conexão.');
-    } finally {
-      setAddingMember(false);
-    }
-  };
-
-  const handleDeleteMember = (id: string, name: string) => {
-    if (id === resident.id) return;
-    setMemberToDelete({ id, name } as Resident);
-  };
-
-  const confirmDeleteMember = async (id: string) => {
-    try {
-      const response = await fetch('/api/residents/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      if (response.ok) {
-        fetchMembers();
-      } else {
-        const data = await response.json();
-        alert(data.error || 'Erro ao remover familiar');
-      }
-    } catch (err) {
-      console.error('Error deleting member:', err);
-    } finally {
-      setMemberToDelete(null);
-    }
-  };
 
   return (
     <div id="resident-status-card" className="w-full max-w-md bg-dark-card border border-dark-border rounded-2xl shadow-xl shadow-black/40 p-8 text-center overflow-hidden flex flex-col">
@@ -270,137 +189,6 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
           </div>
         )}
 
-        {activeSubTab === 'family' && (
-          <div>
-            <div className="text-left mb-4">
-              <h3 className="font-display text-sm font-semibold text-white">Membros do Apartamento</h3>
-              <p className="text-[11px] text-zinc-400 mt-1">
-                Cadastre e gerencie a imagem facial individual de cada pessoa que mora com você.
-              </p>
-            </div>
-
-            {/* Inline Add Member Form */}
-            <form onSubmit={handleAddMember} className="space-y-3 mb-5 bg-dark-input border border-dark-border/40 p-4 rounded-xl text-left">
-              <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider block font-mono">Adicionar Novo Familiar</label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-zinc-500 pointer-events-none">
-                    <UserPlus size={14} />
-                  </span>
-                  <input
-                    type="text"
-                    value={newMemberName}
-                    onChange={(e) => setNewMemberName(e.target.value)}
-                    placeholder="Nome completo"
-                    className="w-full pl-8 pr-3 py-1.5 bg-dark-card border border-dark-border rounded-lg text-xs focus:outline-none focus:border-gold transition-all text-white placeholder-zinc-600"
-                    required
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={addingMember}
-                  className="px-3 py-1.5 bg-gold text-black text-xs font-semibold rounded-lg hover:bg-gold-hover transition-all font-display shrink-0 flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                >
-                  {addingMember ? 'Salvando...' : 'Adicionar'}
-                </button>
-              </div>
-              {error && <span className="text-[10px] text-red-400 block">{error}</span>}
-            </form>
-
-            {/* Members List */}
-            {loadingMembers && members.length === 0 ? (
-              <div className="py-12 text-center text-zinc-500 text-xs flex flex-col items-center justify-center gap-2">
-                <RefreshCw size={18} className="animate-spin text-gold" />
-                Carregando membros...
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto text-left py-1 pr-1 border border-transparent">
-                {members.length === 0 ? (
-                  <p className="text-xs text-zinc-500 text-center py-6">Nenhum familiar cadastrado para este apartamento.</p>
-                ) : (
-                  members.map((member) => {
-                    const isSelf = member.id === resident.id;
-                    const hasPhoto = !!member.photoDataUrl;
-                    const isMemberSync = member.syncStatus === 'synced';
-                    
-                    return (
-                      <div key={member.id} className="flex items-center justify-between p-2.5 bg-dark-input/60 border border-dark-border/35 rounded-xl gap-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                          {/* Circular Badge */}
-                          <div className="w-9 h-9 rounded-full border border-dark-border flex items-center justify-center shrink-0 overflow-hidden bg-neutral-900">
-                            {hasPhoto ? (
-                              <img
-                                src={member.photoDataUrl}
-                                alt={member.name}
-                                className="w-full h-full object-cover scale-x-[-1]"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <User size={14} className="text-zinc-600" />
-                            )}
-                          </div>
-                          
-                          {/* Member Details */}
-                          <div className="min-w-0">
-                            <h4 className="text-xs font-semibold text-white truncate flex items-center gap-1.5">
-                              <span className="truncate">{member.name}</span>
-                              {isSelf && (
-                                <span className="px-1.5 py-0.5 bg-gold/15 text-gold text-[8px] font-bold rounded uppercase tracking-wide shrink-0">
-                                  Você
-                                </span>
-                              )}
-                            </h4>
-                            
-                            {/* Status Indicators */}
-                            <div className="flex items-center gap-1.5 mt-1 select-none">
-                              {!hasPhoto ? (
-                                <span className="text-[8px] font-bold text-amber-500/90 uppercase tracking-wider font-mono">Sem Facial</span>
-                              ) : isMemberSync ? (
-                                <span className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider font-mono flex items-center gap-0.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse shrink-0" /> Sincronizado
-                                </span>
-                              ) : (
-                                <span className="text-[8px] font-bold text-amber-500 uppercase tracking-wider font-mono flex items-center gap-0.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-505 inline-block animate-pulse shrink-0" /> Processando Sync
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Member UI Actions */}
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => onCaptureRequest(member)}
-                            title={hasPhoto ? "Atualizar Foto" : "Tirar Foto"}
-                            className={`p-1.5 rounded-lg border cursor-pointer transition-all ${
-                              hasPhoto 
-                                ? 'border-dark-border text-zinc-400 hover:text-white hover:bg-dark-hover' 
-                                : 'bg-gold/15 border-gold/25 text-gold hover:bg-gold/30'
-                            }`}
-                          >
-                            <Camera size={13} />
-                          </button>
-                          
-                          {!isSelf && (
-                            <button
-                              onClick={() => handleDeleteMember(member.id, member.name)}
-                              title="Remover Familiar"
-                              className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-950/20 border border-transparent hover:border-red-900/10 rounded-lg cursor-pointer transition-all"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {activeSubTab === 'packages' && (
           <div>
             <div className="text-left mb-4 flex items-center justify-between">
@@ -492,53 +280,6 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, i
           <LogOut size={16} /> Sair do Aplicativo
         </button>
       </div>
-
-      {/* CUSTOM MEMBER DELETE CONFIRMATION OVERLAY */}
-      <AnimatePresence>
-        {memberToDelete && (
-          <motion.div
-            id="resident-member-delete-modal"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none"
-            onClick={() => setMemberToDelete(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-dark-card border border-red-900/40 rounded-2xl overflow-hidden shadow-2xl max-w-sm w-full p-6 space-y-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-2.5 text-red-400">
-                <Trash2 size={22} />
-                <h3 className="font-display font-bold text-base text-white">Excluir Familiar</h3>
-              </div>
-              <p className="text-xs text-zinc-300 leading-relaxed font-sans select-text">
-                Deseja realmente remover o familiar <strong>{memberToDelete.name}</strong> deste apartamento de forma definitiva?
-              </p>
-              <div className="flex gap-2 select-none justify-end">
-                <button
-                  type="button"
-                  onClick={() => setMemberToDelete(null)}
-                  className="px-3 py-1.5 bg-dark-input hover:bg-dark-hover border border-dark-border text-xs font-semibold text-zinc-400 rounded-lg cursor-pointer transition-colors font-display"
-                >
-                  Cancelar
-                </button>
-                <button
-                  id="resident-confirm-delete-member-btn"
-                  type="button"
-                  onClick={() => confirmDeleteMember(memberToDelete.id)}
-                  className="px-3 py-1.5 bg-red-650 hover:bg-red-600 text-xs font-semibold text-white rounded-lg cursor-pointer transition-colors font-display"
-                >
-                  Confirmar Remoção
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
     </div>
   );
