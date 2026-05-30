@@ -96,6 +96,8 @@ const POCKETBASE_ADMIN_EMAIL = process.env.POCKETBASE_ADMIN_EMAIL || '';
 const POCKETBASE_ADMIN_PASSWORD = process.env.POCKETBASE_ADMIN_PASSWORD || '';
 
 const pbAdmin = new PocketBase(POCKETBASE_URL);
+// Instância sem autenticação para operações de auth de usuários (login de moradores/funcionários)
+const pbPublic = new PocketBase(POCKETBASE_URL);
 
 async function initPocketBase() {
   try {
@@ -432,7 +434,7 @@ async function startServer() {
     try {
       let authRecord: any;
       try {
-        const authResult = await pbAdmin.collection('residents').authWithPassword(loginEmail, password);
+        const authResult = await pbPublic.collection('residents').authWithPassword(loginEmail, password);
         authRecord = authResult.record;
       } catch {
         return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
@@ -906,7 +908,9 @@ async function startServer() {
         return res.status(403).json({ error: 'Este é seu primeiro acesso. Sua senha será definida agora.', needsSetup: true });
       }
       try {
-        await pbAdmin.collection('employees').authWithPassword(employee.username, password);
+        // Usa email como identidade (username pode estar vazio em registros antigos)
+        const empEmail = (employee as any).email || `${employee.username}@mhvl.local`;
+        await pbPublic.collection('employees').authWithPassword(empEmail, password);
       } catch {
         return res.status(401).json({ error: 'Senha incorreta.' });
       }
