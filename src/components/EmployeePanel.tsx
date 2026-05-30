@@ -58,6 +58,7 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
 
   // Form Fields
   const [apartment, setApartment] = useState('');
+  const [selectedResidentId, setSelectedResidentId] = useState('');
   const [tipo, setTipo] = useState('');
   const [origem, setOrigem] = useState('');
   const [origemCustom, setOrigemCustom] = useState('');
@@ -113,6 +114,17 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
     return partes.join(' · ') || 'Encomenda';
   }
 
+  // Moradores filtrados pelo apartamento digitado
+  const aptResidents = apartment.trim()
+    ? residents.filter(r => r.apartment.trim().toLowerCase() === apartment.trim().toLowerCase())
+    : [];
+
+  // Limpa morador selecionado se trocar de apartamento
+  const handleApartmentChange = (val: string) => {
+    setApartment(val);
+    setSelectedResidentId('');
+  };
+
   const handleAddPackage = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -122,6 +134,12 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
       setError('Por favor, digite o número do apartamento.');
       return;
     }
+    if (aptResidents.length > 0 && !selectedResidentId) {
+      setError('Selecione o morador destinatário da encomenda.');
+      return;
+    }
+
+    const selectedResident = residents.find(r => r.id === selectedResidentId);
 
     try {
       setLoading(true);
@@ -131,21 +149,21 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
         body: JSON.stringify({
           apartment: apartment.trim(),
           block: 'Único',
-          recipientName: 'Qualquer Morador',
+          residentId: selectedResidentId || null,
+          recipientName: selectedResident?.name || 'Qualquer Morador',
           description: buildDescription(),
           receivedBy: employee?.name || 'Portaria'
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Erro ao salvar os dados da encomenda.');
-      }
+      if (!response.ok) throw new Error('Erro ao salvar os dados da encomenda.');
 
       const newPkg = await response.json();
       setPackages((prev) => [newPkg, ...prev]);
       setSuccess('Encomenda registrada! O morador será notificado automaticamente pelo WhatsApp.');
 
       setApartment('');
+      setSelectedResidentId('');
       setTipo('');
       setOrigem('');
       setOrigemCustom('');
@@ -268,11 +286,38 @@ export default function EmployeePanel({ employee, onLogout }: EmployeePanelProps
                 type="text"
                 required
                 value={apartment}
-                onChange={(e) => setApartment(e.target.value)}
+                onChange={(e) => handleApartmentChange(e.target.value)}
                 placeholder="Ex: 101"
                 className="w-full px-3.5 py-2.5 bg-dark-input border border-dark-border rounded-xl text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 text-white placeholder-zinc-600 font-sans"
               />
             </div>
+
+            {aptResidents.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Destinatário *</label>
+                <div className="flex flex-col gap-1.5">
+                  {aptResidents.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setSelectedResidentId(r.id === selectedResidentId ? '' : r.id)}
+                      className={`w-full text-left px-3.5 py-2.5 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
+                        selectedResidentId === r.id
+                          ? 'bg-blue-500/20 border-blue-500 text-white'
+                          : 'bg-dark-input border-dark-border text-zinc-300 hover:border-blue-500/40'
+                      }`}
+                    >
+                      <span className="font-semibold">{r.name}</span>
+                      {r.phone && <span className="text-zinc-500 ml-2 font-mono">{r.phone}</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {apartment.trim() && aptResidents.length === 0 && (
+              <p className="text-[11px] text-amber-400/80">Nenhum morador cadastrado para o apto {apartment}.</p>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block font-display">Tipo</label>
