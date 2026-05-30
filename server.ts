@@ -111,7 +111,14 @@ async function initPocketBase() {
 
 async function pbResidents() {
   const records = await pbAdmin.collection('residents').getFullList({ sort: 'apartment' });
-  return records as unknown as ServerResident[];
+  // Gera photoDataUrl a partir do campo photo (arquivo) se disponível, para retrocompatibilidade
+  return records.map(r => {
+    const rec = r as any;
+    if (rec.photo && !rec.photoDataUrl) {
+      rec.photoDataUrl = pbAdmin.files.getURL(rec, rec.photo);
+    }
+    return rec;
+  }) as unknown as ServerResident[];
 }
 
 async function pbEmployees() {
@@ -237,16 +244,29 @@ async function ensureFaceLib(base: string, client: any): Promise<string> {
   return '1';
 }
 
-async function syncFaceToHikvisionServer(resident: ServerResident, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
-  if (!resident.photoDataUrl) {
-    return { status: 'failed', error: 'Morador sem foto cadastrada' };
+async function syncFaceToHikvisionServer(resident: ServerResident & { photo?: string }, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
+  let photoBuffer: Buffer | null = null;
+
+  // Tenta ler do campo photo (arquivo binário no PocketBase)
+  if ((resident as any).photo) {
+    try {
+      const photoUrl = pbAdmin.files.getURL(resident as any, (resident as any).photo);
+      const photoRes = await fetch(photoUrl);
+      if (photoRes.ok) {
+        photoBuffer = Buffer.from(await photoRes.arrayBuffer());
+      }
+    } catch { /* fallback para base64 */ }
   }
 
-  const match = resident.photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) {
-    return { status: 'failed', error: 'Formato de foto inválido' };
+  // Fallback: campo photoDataUrl legado (base64)
+  if (!photoBuffer && resident.photoDataUrl) {
+    const match = resident.photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) photoBuffer = Buffer.from(match[2], 'base64');
   }
-  const photoBuffer = Buffer.from(match[2], 'base64');
+
+  if (!photoBuffer) {
+    return { status: 'failed', error: 'Morador sem foto cadastrada' };
+  }
 
   const base = `http://${device.deviceIp}:${device.port}`;
   const client = hikFetch(device.username, device.password);
@@ -489,8 +509,10 @@ async function startServer() {
   app.post('/api/residents/upload-face', async (req, res) => {
     const { id, photoDataUrl } = req.body;
     if (!id || !photoDataUrl) return res.status(400).json({ error: 'ID do morador e dados da foto são obrigatórios.' });
-    const approximateSizeInBytes = (photoDataUrl.length * 3) / 4;
-    if (approximateSizeInBytes > 5 * 1024 * 1024) return res.status(400).json({ error: 'A imagem excede o tamanho limite de 5MB.' });
+    const match = photoDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) return res.status(400).json({ error: 'Formato de foto inválido.' });
+    const photoBuffer = Buffer.from(match[2], 'base64');
+    if (photoBuffer.length > 5 * 1024 * 1024) return res.status(400).json({ error: 'A imagem excede o tamanho limite de 5MB.' });
     try {
       const residents = await pbResidents();
       const resident = residents.find(r => r.id === id);
@@ -500,13 +522,17 @@ async function startServer() {
       for (const device of enabledDevices) {
         hikvisionSyncStatus[device.id] = { status: 'pending' };
       }
-      const updated = await pbAdmin.collection('residents').update(id, {
-        photoDataUrl,
-        syncStatus: 'pending',
-        deviceRegistered: false,
-        hikvisionSyncStatus,
-      });
-      res.json(updated);
+      // Salva como arquivo binário no PocketBase (campo "photo") em vez de base64 em texto.
+      // Isso evita o limite de 5000 chars do campo text.
+      const form = new FormData();
+      form.append('photo', new Blob([photoBuffer], { type: match[1] }), `${id}.jpg`);
+      form.append('syncStatus', 'pending');
+      form.append('deviceRegistered', 'false');
+      form.append('hikvisionSyncStatus', JSON.stringify(hikvisionSyncStatus));
+      const updated = await pbAdmin.collection('residents').update(id, form);
+      // Devolve também o photoDataUrl gerado dinamicamente para o frontend continuar funcionando
+      const photoUrl = pbAdmin.files.getURL(updated, updated.photo, { thumb: '0x0' });
+      res.json({ ...updated, photoDataUrl: photoUrl || photoDataUrl });
       if (enabledDevices.length > 0) {
         syncResidentToAllHikvisionDevices(id).catch(err => console.error('Hikvision background sync error:', err));
       }
@@ -520,12 +546,20 @@ async function startServer() {
   // Get photo of a resident
   app.get('/api/residents/photo/:id', async (req, res) => {
     try {
-      const resident = await pbAdmin.collection('residents').getOne(req.params.id) as unknown as ServerResident;
-      if (!resident || !resident.photoDataUrl) return res.status(404).send('Photo not found');
-      const matches = resident.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-      if (!matches || matches.length !== 3) return res.status(400).send('Invalid photo format');
-      res.contentType(matches[1]);
-      res.send(Buffer.from(matches[2], 'base64'));
+      const resident = await pbAdmin.collection('residents').getOne(req.params.id) as unknown as ServerResident & { photo?: string };
+      if (!resident) return res.status(404).send('Photo not found');
+      // Suporta tanto foto salva como arquivo (campo photo) quanto base64 legado (campo photoDataUrl)
+      if (resident.photo) {
+        const photoUrl = pbAdmin.files.getURL(resident, resident.photo);
+        return res.redirect(photoUrl);
+      }
+      if (resident.photoDataUrl) {
+        const matches = resident.photoDataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (!matches || matches.length !== 3) return res.status(400).send('Invalid photo format');
+        res.contentType(matches[1]);
+        return res.send(Buffer.from(matches[2], 'base64'));
+      }
+      res.status(404).send('Photo not found');
     } catch {
       res.status(404).send('Photo not found');
     }
