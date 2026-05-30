@@ -254,30 +254,40 @@ async function syncFaceToHikvisionServer(resident: ServerResident, device: Serve
   const personId = (parseInt(resident.id.replace(/\D/g, '').slice(0, 9), 10) || Math.abs(hashCode(resident.id))).toString();
 
   try {
-    // 1. Criar/atualizar pessoa no terminal
-    const personPayload = {
-      UserInfo: {
-        employeeNo: personId,
-        name: resident.name.substring(0, 32),
-        userType: 'normal',
-        Valid: { enable: true, beginTime: '2000-01-01T00:00:00', endTime: '2037-12-31T23:59:59', timeType: 'local' },
-        doorRight: '1',
-        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
-      },
+    // 1. Criar/atualizar pessoa no terminal com permissão de acesso à porta
+    const userInfo = {
+      employeeNo: personId,
+      name: resident.name.substring(0, 32),
+      userType: 'normal',
+      Valid: { enable: true, beginTime: '2000-01-01T00:00:00', endTime: '2037-12-31T23:59:59', timeType: 'local' },
+      doorRight: '1',
+      RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
     };
 
     const personRes = await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Record?format=json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(personPayload),
+      body: JSON.stringify({ UserInfo: userInfo }),
       signal: AbortSignal.timeout(15000),
     });
 
     if (!personRes.ok) {
       const errText = await personRes.text();
-      // statusCode 6 / "employeeNo already exist" significa que a pessoa já existe — ok, atualizamos a face.
       const alreadyExists = /statusCode["\s:]*6\b/.test(errText) || /already exist/i.test(errText);
-      if (!alreadyExists) {
+      if (alreadyExists) {
+        // Pessoa já existe — atualiza UserInfo para garantir que RightPlan e doorRight estejam corretos.
+        const modRes = await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Modify?format=json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ UserInfo: userInfo }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!modRes.ok) {
+          const modErr = await modRes.text();
+          // Alguns firmwares não têm /Modify — ignora o erro e segue para a face
+          console.warn(`[Hikvision] Modify falhou (${modRes.status}): ${modErr.substring(0, 120)} — prosseguindo para face`);
+        }
+      } else {
         return { status: 'failed', error: `Erro ao criar pessoa HTTP ${personRes.status}: ${errText.substring(0, 120)}` };
       }
     }
