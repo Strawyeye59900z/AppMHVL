@@ -101,6 +101,14 @@ async function initPocketBase() {
   try {
     await pbAdmin.collection('_superusers').authWithPassword(POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD);
     console.log('PocketBase admin authenticated successfully.');
+    // Renovar token a cada 10 minutos para nunca expirar
+    setInterval(async () => {
+      try {
+        await pbAdmin.collection('_superusers').authWithPassword(POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD);
+      } catch (e) {
+        console.error('[PocketBase] Falha ao renovar token:', e);
+      }
+    }, 10 * 60 * 1000);
   } catch (err) {
     console.error('PocketBase admin auth failed:', err);
     process.exit(1);
