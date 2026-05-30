@@ -5,7 +5,9 @@ export interface Resident {
   block: string;
   phone?: string;
   whatsapp?: string;
+  password?: string;
   photoDataUrl?: string;
+  driveFileId?: string;
   registeredAt: string;
   syncStatus: 'pending' | 'synced' | 'failed';
   syncError?: string;

@@ -36,15 +36,16 @@ import HikvisionPanel from './HikvisionPanel';
 import { Reservation } from '../types';
 
 interface AdminDashboardProps {
-  onAdminStateChange?: (user: any) => void;
+  user: any;
+  onLogin: (user: any) => void;
+  onLogout: () => void;
   onBack?: () => void;
 }
 
-export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDashboardProps = {}) {
+export default function AdminDashboard({ user, onLogin, onLogout, onBack }: AdminDashboardProps) {
   const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario' | 'whatsapp' | 'hikvision'>('moradores');
-  const [googleUser, setGoogleUser] = useState<any>(() => {
-    try { return JSON.parse(localStorage.getItem('adminSession') || 'null'); } catch { return null; }
-  });
+  // Session is owned by the parent <App>; this component is fully controlled.
+  const googleUser = user;
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [residents, setResidents] = useState<Resident[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -442,12 +443,6 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
   };
 
   useEffect(() => {
-    if (onAdminStateChange) {
-      onAdminStateChange(googleUser);
-    }
-  }, [googleUser, onAdminStateChange]);
-
-  useEffect(() => {
     fetchResidents();
     fetchAdmins();
     fetchSharedDriveConfig();
@@ -544,10 +539,9 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
         throw new Error(loginData.error || 'Erro ao realizar login.');
       }
 
-      // Successful login
-      localStorage.setItem('adminSession', JSON.stringify(loginData.user));
-      setGoogleUser(loginData.user);
+      // Successful login — hand the session up to <App>
       setAuthError('');
+      onLogin(loginData.user);
     } catch (err: any) {
       setAuthError(err.message || 'Erro de conexão.');
     } finally {
@@ -603,8 +597,7 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
 
       const loginData = await loginRes.json();
       if (loginRes.ok) {
-        localStorage.setItem('adminSession', JSON.stringify(loginData.user));
-        setGoogleUser(loginData.user);
+        onLogin(loginData.user);
       } else {
         setAuthError('Senha cadastrada com sucesso! Faça o login novamente.');
       }
@@ -626,26 +619,23 @@ export default function AdminDashboard({ onAdminStateChange, onBack }: AdminDash
     }
   };
 
-  // Handle Sign Out
+  // Handle Sign Out — only triggered by the explicit logout button
   const handleGoogleSignOut = async () => {
     try {
       if (googleUser && !googleUser.isLocalAdmin) {
         await logout();
       }
     } catch (err) {
-      console.warn("Firebase logout failed:", err);
+      console.warn("PocketBase logout failed:", err);
     }
-    localStorage.removeItem('adminSession');
-    setGoogleUser(null);
     setAccessToken(null);
     setAdminEmail('');
     setAdminPassword('');
     setAdminConfirmPassword('');
     setIsFirstAccessSetup(false);
     setSyncLogs([]);
-    if (onBack) {
-      onBack();
-    }
+    // Parent clears the session and returns to the resident portal.
+    onLogout();
   };
 
   // Handle delete resident account

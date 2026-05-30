@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Building, Lock, Package, User } from 'lucide-react';
 import { Resident } from './types';
@@ -30,7 +30,28 @@ export default function App() {
   const [residentView, setResidentView] = useState<'inicio' | 'reservar' | 'encomendas' | 'family'>('inicio');
   const [loggedInResident, setLoggedInResident] = useState<Resident | null>(null);
   const [captureTarget, setCaptureTarget] = useState<Resident | null>(null);
-  const [adminUser, setAdminUser] = useState<any>(null);
+  // Admin session lives here (lifted from AdminDashboard) so that re-renders or
+  // sub-panel actions can never accidentally drop the admin back to the login screen.
+  const [adminUser, setAdminUser] = useState<any>(() => {
+    try { return JSON.parse(localStorage.getItem('adminSession') || 'null'); } catch { return null; }
+  });
+
+  const handleAdminLogin = useCallback((user: any) => {
+    localStorage.setItem('adminSession', JSON.stringify(user));
+    setAdminUser(user);
+  }, []);
+
+  const handleAdminLogout = useCallback(() => {
+    localStorage.removeItem('adminSession');
+    setAdminUser(null);
+    localStorage.removeItem('activeTab');
+    setActiveTabRaw('resident');
+  }, []);
+
+  const handleAdminBack = useCallback(() => {
+    localStorage.removeItem('activeTab');
+    setActiveTabRaw('resident');
+  }, []);
   
   // Employee Login State
   const [employeeSession, setEmployeeSession] = useState<{ id: string; name: string; photoDataUrl?: string } | null>(null);
@@ -438,14 +459,11 @@ export default function App() {
         ) : (
           /* ADMIN DASHBOARD */
           <div className="w-full">
-            <AdminDashboard 
-              onAdminStateChange={(user) => setAdminUser(user)} 
-              onBack={() => {
-                const stack = new Error().stack || '';
-                localStorage.setItem('lastOnBackStack', stack + ' | time:' + Date.now());
-                setActiveTab('resident');
-                setAdminUser(null);
-              }}
+            <AdminDashboard
+              user={adminUser}
+              onLogin={handleAdminLogin}
+              onLogout={handleAdminLogout}
+              onBack={handleAdminBack}
             />
           </div>
         )}

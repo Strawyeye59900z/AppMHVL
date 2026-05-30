@@ -197,6 +197,46 @@ function hikFetch(username: string, password: string) {
   return new DigestFetch(username, password, { algorithm: 'MD5' });
 }
 
+// Garante que exista uma FaceLib (FDID) do tipo blackFD no terminal e devolve o FDID.
+// O DS-K1T342MWX exige um FDID válido antes de gravar faces — não aceita "blackFD" como lib.
+async function ensureFaceLib(base: string, client: any): Promise<string> {
+  // 1. Tenta listar libraries já existentes
+  const listRes = await client.fetch(`${base}/ISAPI/Intelligent/FDLib?format=json`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (listRes.ok) {
+    try {
+      const data = await listRes.json();
+      const libs = data?.FPLibListInfo?.FPLibInfo || data?.FDLibInfoList || [];
+      const arr = Array.isArray(libs) ? libs : [libs];
+      const existing = arr.find((l: any) => (l.faceLibType || l.FPLibType) === 'blackFD');
+      if (existing && (existing.FDID || existing.id)) {
+        return String(existing.FDID || existing.id);
+      }
+    } catch { /* segue para criação */ }
+  }
+
+  // 2. Cria a face library
+  const createRes = await client.fetch(`${base}/ISAPI/Intelligent/FDLib?format=json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      FPLibInfo: { faceLibType: 'blackFD', name: 'CondominioFaces', customInfo: 'AppMHVL' },
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (createRes.ok) {
+    try {
+      const data = await createRes.json();
+      if (data?.FDID) return String(data.FDID);
+    } catch { /* fallback abaixo */ }
+  }
+  // Fallback: muitos firmwares aceitam FDID "1" como a library padrão.
+  return '1';
+}
+
 async function syncFaceToHikvisionServer(resident: ServerResident, device: ServerHikvisionDevice): Promise<HikvisionFaceSyncStatus> {
   if (!resident.photoDataUrl) {
     return { status: 'failed', error: 'Morador sem foto cadastrada' };
@@ -206,12 +246,12 @@ async function syncFaceToHikvisionServer(resident: ServerResident, device: Serve
   if (!match) {
     return { status: 'failed', error: 'Formato de foto inválido' };
   }
-  const photoBase64 = match[2];
+  const photoBuffer = Buffer.from(match[2], 'base64');
 
   const base = `http://${device.deviceIp}:${device.port}`;
   const client = hikFetch(device.username, device.password);
-  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  const personId = resident.id.replace(/[^a-zA-Z0-9]/g, '').substring(0, 32);
+  // employeeNo precisa ser numérico/curto no DS-K1T342MWX; derivamos um número estável do id.
+  const personId = (parseInt(resident.id.replace(/\D/g, '').slice(0, 9), 10) || Math.abs(hashCode(resident.id))).toString();
 
   try {
     // 1. Criar/atualizar pessoa no terminal
@@ -220,49 +260,50 @@ async function syncFaceToHikvisionServer(resident: ServerResident, device: Serve
         employeeNo: personId,
         name: resident.name.substring(0, 32),
         userType: 'normal',
-        Valid: { enable: true, beginTime: '2000-01-01T00:00:00', endTime: '2037-12-31T23:59:59' },
-        localUIRight: false,
-        maxOpenDoorTime: 0,
-        openDoorTime: 5,
-        roomNumber: resident.apartment,
-        floorNumber: 0,
+        Valid: { enable: true, beginTime: '2000-01-01T00:00:00', endTime: '2037-12-31T23:59:59', timeType: 'local' },
+        doorRight: '1',
+        RightPlan: [{ doorNo: 1, planTemplateNo: '1' }],
       },
     };
 
     const personRes = await client.fetch(`${base}/ISAPI/AccessControl/UserInfo/Record?format=json`, {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(personPayload),
       signal: AbortSignal.timeout(15000),
     });
 
     if (!personRes.ok) {
       const errText = await personRes.text();
-      if (!errText.includes('"statusCode": 6') && !errText.includes('"statusCode":6')) {
-        return { status: 'failed', error: `Erro ao criar pessoa HTTP ${personRes.status}` };
+      // statusCode 6 / "employeeNo already exist" significa que a pessoa já existe — ok, atualizamos a face.
+      const alreadyExists = /statusCode["\s:]*6\b/.test(errText) || /already exist/i.test(errText);
+      if (!alreadyExists) {
+        return { status: 'failed', error: `Erro ao criar pessoa HTTP ${personRes.status}: ${errText.substring(0, 120)}` };
       }
     }
 
-    // 2. Enviar foto para reconhecimento facial
-    const facePayload = {
-      FaceInfo: {
-        employeeNo: personId,
-        faceLibType: 'blackFD',
-        faceURL: '',
-        faceData: photoBase64,
-      },
+    // 2. Garantir face library e enviar a foto via multipart/form-data
+    const fdid = await ensureFaceLib(base, client);
+
+    const faceDataRecord = {
+      faceLibType: 'blackFD',
+      FDID: fdid,
+      FPID: personId, // vincula a face ao employeeNo
     };
+
+    const form = new FormData();
+    form.append('FaceDataRecord', JSON.stringify(faceDataRecord));
+    form.append('img', new Blob([photoBuffer], { type: 'image/jpeg' }), `${personId}.jpg`);
 
     const faceRes = await client.fetch(`${base}/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify(facePayload),
+      body: form, // o Blob/FormData define o Content-Type com boundary automaticamente
       signal: AbortSignal.timeout(20000),
     });
 
     if (!faceRes.ok) {
       const errText = await faceRes.text();
-      return { status: 'failed', error: `Erro foto HTTP ${faceRes.status}: ${errText.substring(0, 100)}` };
+      return { status: 'failed', error: `Erro foto HTTP ${faceRes.status}: ${errText.substring(0, 120)}` };
     }
 
     return { status: 'synced', syncedAt: new Date().toISOString() };
@@ -270,6 +311,14 @@ async function syncFaceToHikvisionServer(resident: ServerResident, device: Serve
     const errMsg = err.name === 'TimeoutError' ? 'Timeout na sincronização' : (err.message || 'Erro desconhecido');
     return { status: 'failed', error: errMsg };
   }
+}
+
+function hashCode(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  }
+  return h;
 }
 
 async function syncResidentToAllHikvisionDevices(residentId: string): Promise<void> {
@@ -393,7 +442,7 @@ async function startServer() {
 
   // Add a family member to an apartment
   app.post('/api/residents/add-member', async (req, res) => {
-    const { name, apartment } = req.body;
+    const { name, apartment, phone } = req.body;
     const block = req.body.block || 'Único';
     if (!name || !apartment) return res.status(400).json({ error: 'Nome e apartamento são obrigatórios.' });
     try {
@@ -409,6 +458,7 @@ async function startServer() {
         name: name.trim(),
         apartment: apartment.trim(),
         block: block.trim(),
+        phone: phone ? phone.trim() : '',
         registeredAt: new Date().toISOString(),
         syncStatus: 'pending',
         firstLogin: false,
@@ -1160,13 +1210,17 @@ async function startServer() {
     console.log(`Server running on port ${PORT}`);
   });
 
-  // Iniciar WhatsApp Baileys em background (só se houver sessão salva)
+  // Iniciar WhatsApp Baileys em background.
+  // Conecta automaticamente: se já houver sessão salva, reconecta; caso contrário,
+  // gera o QR/pairing code que o admin escaneia pelo painel. Sem isso, o disparo
+  // automático ao criar reserva nunca acontece porque o cliente fica desconectado.
   const fs = await import('fs');
   if (fs.existsSync('./baileys_auth/creds.json')) {
-    waClient.connect().catch(err => console.error('[WhatsApp] Erro ao iniciar:', err));
+    console.log('[WhatsApp] Sessão encontrada — reconectando...');
   } else {
-    console.log('[WhatsApp] Sem sessão salva — aguardando conexão manual pelo painel.');
+    console.log('[WhatsApp] Sem sessão salva — gerando QR/pairing code. Abra o painel WhatsApp do admin para vincular.');
   }
+  waClient.connect().catch(err => console.error('[WhatsApp] Erro ao iniciar:', err));
 }
 
 process.on('uncaughtException', (err) => {
