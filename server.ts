@@ -419,8 +419,10 @@ async function startServer() {
       if (existing) {
         return res.status(400).json({ error: 'Este apartamento já possui um cadastro ativo.' });
       }
+      const resUsername = `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`;
       const created = await pbAdmin.collection('residents').create({
-        username: `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}`,
+        username: resUsername,
+        email: `${resUsername}@mhvl.local`,
         password,
         passwordConfirm: password,
         name: name.trim(),
@@ -463,8 +465,10 @@ async function startServer() {
       ).catch(() => null);
       if (exists) return res.status(400).json({ error: 'Este familiar já está cadastrado neste apartamento.' });
       const memberPassword = Math.random().toString(36).slice(2) + 'Aa1!';
+      const memberUsername = `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}_${Date.now()}`;
       const newMember = await pbAdmin.collection('residents').create({
-        username: apartment.trim() + '_' + Date.now(),
+        username: memberUsername,
+        email: `${memberUsername}@mhvl.local`,
         password: memberPassword,
         passwordConfirm: memberPassword,
         name: name.trim(),
@@ -851,10 +855,11 @@ async function startServer() {
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório.' });
     try {
       const tempPassword = Math.random().toString(36).slice(2, 10) + 'Aa1!';
-      // username deve ser único e sem espaços no PocketBase
-      const username = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') + '_' + Date.now();
+      const ts = Date.now();
+      const username = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') + '_' + ts;
       const newEmployee = await pbAdmin.collection('employees').create({
         username,
+        email: `${username}@mhvl.local`,
         password: tempPassword,
         passwordConfirm: tempPassword,
         name: name.trim(),
