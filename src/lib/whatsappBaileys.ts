@@ -112,11 +112,27 @@ class WhatsAppBaileys extends EventEmitter {
     }
     const digits = phone.replace(/\D/g, '');
 
-    // Resolve o JID correto via onWhatsApp (lida com variações do 9º dígito BR)
-    const results = await this.sock.onWhatsApp(digits + '@s.whatsapp.net');
-    const resolved = results?.[0];
-    const jid = resolved?.exists ? resolved.jid : digits + '@s.whatsapp.net';
-
+    // Resolve JID correto — tenta com o número original, depois sem o 9º dígito BR se não achar
+    let jid = digits + '@s.whatsapp.net';
+    try {
+      const results = await this.sock.onWhatsApp(digits + '@s.whatsapp.net');
+      if (results?.[0]?.exists) {
+        jid = results[0].jid;
+      } else if (digits.length === 13 && digits.startsWith('55')) {
+        // Tenta sem o 9º dígito: 5571 9 91081158 → 5571 91081158
+        const without9 = digits.slice(0, 4) + digits.slice(5);
+        const results2 = await this.sock.onWhatsApp(without9 + '@s.whatsapp.net');
+        if (results2?.[0]?.exists) {
+          jid = results2[0].jid;
+          console.log(`[WhatsApp] JID resolvido sem 9º dígito: ${jid}`);
+        } else {
+          console.warn(`[WhatsApp] Número ${digits} não encontrado no WhatsApp`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[WhatsApp] onWhatsApp falhou, usando JID direto: ${jid}`);
+    }
+    console.log(`[WhatsApp] Enviando para JID: ${jid}`);
     await this.sock.sendMessage(jid, { text: message });
   }
 }
