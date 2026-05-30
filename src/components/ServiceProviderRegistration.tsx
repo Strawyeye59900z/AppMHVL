@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Camera, Check, AlertCircle, RefreshCw, Building, User, ShieldCheck } from 'lucide-react';
 
@@ -44,56 +44,62 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
   }, [token]);
 
   useEffect(() => {
-    return () => {
-      streamRef.current?.getTracks().forEach(t => t.stop());
-    };
+    return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
   }, []);
 
-  const startCamera = async () => {
+  const startCamera = useCallback(async () => {
     setPermissionError(null);
     setCapturedPhoto(null);
     try {
-      if (!navigator.mediaDevices) {
-        setPermissionError('Câmera não disponível. Certifique-se de acessar via HTTPS.');
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setPermissionError('Câmera não disponível. Acesse via HTTPS ou localhost.');
         return;
       }
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current?.getTracks().forEach(t => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
         audio: false,
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        videoRef.current.play().catch(() => {});
       }
       setCameraStarted(true);
-    } catch (err: any) {
-      setPermissionError('Permissão de câmera negada. Permita o acesso à câmera e tente novamente.');
+    } catch {
+      setPermissionError('Permissão de câmera negada. Permita o acesso e tente novamente.');
     }
-  };
+  }, []);
 
-  const capturePhoto = () => {
+  const capturePhoto = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+
+    const w = video.videoWidth || video.clientWidth || 640;
+    const h = video.videoHeight || video.clientHeight || 480;
+    canvas.width = w;
+    canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.translate(canvas.width, 0);
+
+    // Mirror horizontally (front camera)
+    ctx.save();
+    ctx.translate(w, 0);
     ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-    setCapturedPhoto(dataUrl);
+    ctx.drawImage(video, 0, 0, w, h);
+    ctx.restore();
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
     streamRef.current?.getTracks().forEach(t => t.stop());
     setCameraStarted(false);
-  };
+    setCapturedPhoto(dataUrl);
+  }, []);
 
-  const retake = () => {
+  const retake = useCallback(() => {
     setCapturedPhoto(null);
     startCamera();
-  };
+  }, [startCamera]);
 
   const submitPhoto = async () => {
     if (!capturedPhoto) return;
@@ -115,11 +121,14 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
     }
   };
 
+  // Canvas always stays in DOM so refs are always valid
+  const hiddenCanvas = <canvas ref={canvasRef} className="hidden absolute" />;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#020617] flex items-center justify-center text-zinc-400 text-sm gap-2">
-        <RefreshCw size={18} className="animate-spin" />
-        Carregando convite...
+        {hiddenCanvas}
+        <RefreshCw size={18} className="animate-spin" /> Carregando convite...
       </div>
     );
   }
@@ -127,6 +136,7 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
   if (loadError) {
     return (
       <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6">
+        {hiddenCanvas}
         <div className="max-w-sm w-full bg-[#0f172a] border border-red-900/40 rounded-2xl p-8 text-center space-y-4">
           <AlertCircle size={40} className="text-red-400 mx-auto" />
           <h2 className="font-bold text-white text-lg">Link Inválido</h2>
@@ -139,6 +149,7 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
   if (done) {
     return (
       <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6">
+        {hiddenCanvas}
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -149,14 +160,17 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
           </div>
           <h2 className="font-bold text-white text-xl">Cadastro Concluído!</h2>
           <p className="text-zinc-400 text-sm leading-relaxed">
-            Sua foto foi registrada com sucesso. Você já pode acessar o condomínio <strong className="text-white">Mansão Heitor Vila Lobos</strong> pelo reconhecimento facial.
+            Sua foto foi registrada com sucesso. Você já pode acessar o condomínio{' '}
+            <strong className="text-white">Mansão Heitor Vila Lobos</strong> pelo reconhecimento facial.
           </p>
-          <div className="p-3 bg-dark-input/60 border border-dark-border rounded-xl text-left space-y-1">
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-mono">Validade do acesso</p>
-            <p className="text-sm text-white font-semibold">
-              {providerInfo ? new Date(providerInfo.accessExpiry).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) : ''}
-            </p>
-          </div>
+          {providerInfo && (
+            <div className="p-3 bg-[#0a0f1e] border border-zinc-800 rounded-xl text-left space-y-1">
+              <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-mono">Validade do acesso</p>
+              <p className="text-sm text-white font-semibold">
+                {new Date(providerInfo.accessExpiry).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+              </p>
+            </div>
+          )}
           <p className="text-xs text-zinc-500">Você pode fechar esta página.</p>
         </motion.div>
       </div>
@@ -165,6 +179,8 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
 
   return (
     <div className="min-h-screen bg-[#020617] text-[#E4E4E7] flex flex-col font-sans">
+      {hiddenCanvas}
+
       {/* Header */}
       <header className="border-b border-white/5 bg-[#0f172a]/60 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-lg mx-auto px-4 h-16 flex items-center gap-3">
@@ -178,13 +194,14 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
         </div>
       </header>
 
-      <main className="flex-1 flex items-center justify-center p-4">
-        <div className="w-full max-w-sm space-y-5">
+      <main className="flex-1 flex items-start justify-center p-4 pt-6">
+        <div className="w-full max-w-sm space-y-4">
+
           {/* Provider info card */}
-          <div className="bg-[#0f172a] border border-dark-border rounded-2xl p-5 space-y-3">
+          <div className="bg-[#0f172a] border border-zinc-800 rounded-2xl p-5 space-y-3">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gold/10 border border-gold/20 flex items-center justify-center shrink-0">
-                <User size={18} className="text-gold" />
+              <div className="w-10 h-10 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
+                <User size={18} className="text-yellow-400" />
               </div>
               <div>
                 <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-mono">Convite para</p>
@@ -192,15 +209,15 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="bg-dark-input/60 border border-dark-border/50 rounded-lg p-2.5">
+              <div className="bg-zinc-900/60 border border-zinc-800 rounded-lg p-2.5">
                 <p className="text-zinc-500 text-[9px] uppercase tracking-wider font-mono mb-0.5">Serviço</p>
                 <p className="text-white font-medium">{providerInfo?.serviceType}</p>
               </div>
-              <div className="bg-dark-input/60 border border-dark-border/50 rounded-lg p-2.5">
+              <div className="bg-zinc-900/60 border border-zinc-800 rounded-lg p-2.5">
                 <p className="text-zinc-500 text-[9px] uppercase tracking-wider font-mono mb-0.5">Apartamento</p>
                 <p className="text-white font-medium">Apto {providerInfo?.apartment}</p>
               </div>
-              <div className="bg-dark-input/60 border border-dark-border/50 rounded-lg p-2.5 col-span-2">
+              <div className="bg-zinc-900/60 border border-zinc-800 rounded-lg p-2.5 col-span-2">
                 <p className="text-zinc-500 text-[9px] uppercase tracking-wider font-mono mb-0.5">Acesso válido até</p>
                 <p className="text-emerald-400 font-semibold">
                   {providerInfo ? new Date(providerInfo.accessExpiry).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) : ''}
@@ -209,15 +226,15 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
             </div>
           </div>
 
-          {/* Instructions */}
+          {/* Step: Instructions */}
           {!cameraStarted && !capturedPhoto && (
-            <div className="bg-[#0f172a] border border-dark-border rounded-2xl p-5 space-y-3">
+            <div className="bg-[#0f172a] border border-zinc-800 rounded-2xl p-5 space-y-4">
               <div className="flex items-start gap-3">
-                <ShieldCheck size={16} className="text-gold shrink-0 mt-0.5" />
+                <ShieldCheck size={16} className="text-yellow-400 shrink-0 mt-0.5" />
                 <div>
                   <h3 className="text-xs font-semibold text-white">Como funciona</h3>
                   <p className="text-[11px] text-zinc-400 leading-relaxed mt-1">
-                    Tire uma foto do seu rosto para que o sistema de reconhecimento facial do condomínio possa identificar você na entrada durante o período de acesso.
+                    Tire uma foto do seu rosto para que o sistema de reconhecimento facial do condomínio possa identificar você na entrada.
                   </p>
                 </div>
               </div>
@@ -229,39 +246,42 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
               )}
               <button
                 onClick={startCamera}
-                className="w-full flex items-center justify-center gap-2 py-3 bg-gold hover:bg-yellow-400 text-black font-bold rounded-xl text-sm transition-all shadow-lg shadow-gold/20 cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3.5 bg-yellow-400 hover:bg-yellow-300 text-black font-bold rounded-xl text-sm transition-all shadow-lg cursor-pointer"
               >
                 <Camera size={16} /> Abrir Câmera
               </button>
             </div>
           )}
 
-          {/* Live camera view */}
+          {/* Step: Live camera */}
           <AnimatePresence>
             {cameraStarted && !capturedPhoto && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.97 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0 }}
-                className="bg-[#0f172a] border border-dark-border rounded-2xl overflow-hidden space-y-3 p-4"
+                className="bg-[#0f172a] border border-zinc-800 rounded-2xl overflow-hidden space-y-3 p-4"
               >
-                <p className="text-[10px] text-zinc-400 uppercase tracking-wider text-center font-mono">Posicione seu rosto no centro</p>
-                <div className="relative rounded-xl overflow-hidden bg-black aspect-[4/3]">
+                <p className="text-[10px] text-zinc-400 uppercase tracking-wider text-center font-mono">
+                  Posicione seu rosto no centro
+                </p>
+                <div className="relative rounded-xl overflow-hidden bg-black" style={{ aspectRatio: '4/3' }}>
                   <video
                     ref={videoRef}
                     autoPlay
                     playsInline
                     muted
-                    className="w-full h-full object-cover scale-x-[-1]"
+                    className="w-full h-full object-cover"
+                    style={{ transform: 'scaleX(-1)' }}
                   />
-                  {/* Face guide overlay */}
+                  {/* Face guide */}
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-40 h-48 border-2 border-dashed border-gold/40 rounded-full" />
+                    <div className="w-44 h-52 border-2 border-dashed border-yellow-400/50 rounded-full" />
                   </div>
                 </div>
                 <button
                   onClick={capturePhoto}
-                  className="w-full py-3 bg-gold hover:bg-yellow-400 text-black font-bold rounded-xl text-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full py-3.5 bg-yellow-400 hover:bg-yellow-300 text-black font-bold rounded-xl text-sm transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Camera size={16} /> Tirar Foto
                 </button>
@@ -269,18 +289,24 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
             )}
           </AnimatePresence>
 
-          {/* Preview captured photo */}
+          {/* Step: Preview & confirm */}
           <AnimatePresence>
             {capturedPhoto && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.97 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0 }}
-                className="bg-[#0f172a] border border-dark-border rounded-2xl overflow-hidden space-y-3 p-4"
+                className="bg-[#0f172a] border border-zinc-800 rounded-2xl overflow-hidden space-y-3 p-4"
               >
-                <p className="text-[10px] text-zinc-400 uppercase tracking-wider text-center font-mono">Confirme sua foto</p>
-                <div className="rounded-xl overflow-hidden aspect-[4/3] bg-black">
-                  <img src={capturedPhoto} alt="Preview" className="w-full h-full object-cover" />
+                <p className="text-[10px] text-zinc-400 uppercase tracking-wider text-center font-mono">
+                  Confirme sua foto
+                </p>
+                <div className="rounded-xl overflow-hidden bg-black" style={{ aspectRatio: '4/3' }}>
+                  <img
+                    src={capturedPhoto}
+                    alt="Preview"
+                    className="w-full h-full object-cover"
+                  />
                 </div>
                 {uploadError && (
                   <div className="p-3 bg-red-950/30 border border-red-900/30 rounded-xl text-[11px] text-red-400 flex items-start gap-2">
@@ -292,7 +318,7 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
                   <button
                     onClick={retake}
                     disabled={uploading}
-                    className="flex-1 py-3 bg-dark-input hover:bg-dark-hover text-zinc-300 font-semibold rounded-xl text-sm border border-dark-border transition-all cursor-pointer disabled:opacity-50"
+                    className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold rounded-xl text-sm border border-zinc-700 transition-all cursor-pointer disabled:opacity-50"
                   >
                     Repetir
                   </button>
@@ -308,10 +334,9 @@ export default function ServiceProviderRegistration({ token }: ServiceProviderRe
               </motion.div>
             )}
           </AnimatePresence>
+
         </div>
       </main>
-
-      <canvas ref={canvasRef} className="hidden" />
     </div>
   );
 }

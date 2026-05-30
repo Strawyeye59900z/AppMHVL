@@ -1456,20 +1456,24 @@ async function startServer() {
     return (map[duration] || 30) * 24 * 60 * 60 * 1000;
   }
 
-  // List all providers for a resident
+  // List all providers — optionally filtered by residentId
   app.get('/api/providers', async (req, res) => {
     const { residentId } = req.query;
-    if (!residentId) return res.status(400).json({ error: 'residentId é obrigatório.' });
     try {
+      const filter = residentId ? `residentId = "${residentId}"` : '';
       const records = await pbAdmin.collection('serviceProviders').getFullList({
-        filter: `residentId = "${residentId}"`,
-        sort: '-createdAt',
+        ...(filter ? { filter } : {}),
+        sort: '-created',
       });
-      const providers = records.map((r: any) => ({
-        ...r,
-        photoDataUrl: providerPhotoUrl(r),
-        hikvisionSyncStatus: typeof r.hikvisionSyncStatus === 'string' ? JSON.parse(r.hikvisionSyncStatus || '{}') : (r.hikvisionSyncStatus || {}),
-      }));
+      const providers = records.map((r: any) => {
+        let hikStatus: any = {};
+        try {
+          hikStatus = typeof r.hikvisionSyncStatus === 'string'
+            ? JSON.parse(r.hikvisionSyncStatus || '{}')
+            : (r.hikvisionSyncStatus || {});
+        } catch { hikStatus = {}; }
+        return { ...r, photoDataUrl: providerPhotoUrl(r), hikvisionSyncStatus: hikStatus };
+      });
       res.json(providers);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1637,6 +1641,43 @@ async function startServer() {
       res.setHeader('Cache-Control', 'private, max-age=3600');
       const arrayBuffer = await response.arrayBuffer();
       res.send(Buffer.from(arrayBuffer));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Manually sync provider to all enabled Hikvision devices
+  app.post('/api/providers/sync-hikvision', async (req, res) => {
+    const { providerId } = req.body;
+    if (!providerId) return res.status(400).json({ error: 'providerId é obrigatório.' });
+    try {
+      const record = await pbAdmin.collection('serviceProviders').getOne(providerId) as unknown as ServerServiceProvider;
+      if (!record.photo) return res.status(400).json({ error: 'Prestador não possui foto cadastrada.' });
+
+      const allDevices = (await pbSetting('hikvision_devices') || []) as ServerHikvisionDevice[];
+      const enabledDevices = allDevices.filter(d => d.enabled);
+      if (enabledDevices.length === 0) return res.status(400).json({ error: 'Nenhum dispositivo Hikvision habilitado.' });
+
+      const fakeResident: ServerResident & { photo?: string; collectionId?: string } = {
+        id: record.id,
+        name: record.name,
+        apartment: record.apartment,
+        block: record.block,
+        registeredAt: record.createdAt,
+        syncStatus: 'pending',
+        firstLogin: false,
+        photo: record.photo,
+        collectionId: 'serviceProviders',
+      };
+
+      const syncResults: Record<string, HikvisionFaceSyncStatus> = {};
+      for (const device of enabledDevices) {
+        syncResults[device.id] = await syncFaceToHikvisionServer(fakeResident, device);
+      }
+      await pbAdmin.collection('serviceProviders').update(providerId, {
+        hikvisionSyncStatus: JSON.stringify(syncResults),
+      });
+      res.json({ success: true, results: syncResults });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -27,7 +27,7 @@ import {
   ShieldAlert,
   KeyRound
 } from 'lucide-react';
-import { Resident, SyncProgress } from '../types';
+import { Resident, SyncProgress, ServiceProvider } from '../types';
 import { logout } from '../pocketbase';
 import { findOrCreateFolder, uploadResidentPhoto, deleteDriveFile } from '../driveService';
 import ReservationSection from './ReservationSection';
@@ -44,7 +44,11 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ user, onLogin, onLogout, onBack }: AdminDashboardProps) {
-  const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario' | 'whatsapp' | 'hikvision'>('moradores');
+  const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario' | 'whatsapp' | 'hikvision' | 'prestadores'>('moradores');
+  const [providers, setProviders] = useState<ServiceProvider[]>([]);
+  const [loadingProviders, setLoadingProviders] = useState(false);
+  const [syncingProviderId, setSyncingProviderId] = useState<string | null>(null);
+  const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
   // Session is owned by the parent <App>; this component is fully controlled.
   const googleUser = user;
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -463,10 +467,45 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
   }, []);
 
   useEffect(() => {
-    if (adminSubTab === 'funcionarios') {
-      fetchEmployees();
-    }
+    if (adminSubTab === 'funcionarios') fetchEmployees();
+    if (adminSubTab === 'prestadores') fetchProviders();
   }, [adminSubTab]);
+
+  const fetchProviders = async () => {
+    setLoadingProviders(true);
+    try {
+      const res = await fetch('/api/providers');
+      if (res.ok) setProviders(await res.json());
+    } catch { /* silently ignore */ }
+    finally { setLoadingProviders(false); }
+  };
+
+  const syncProviderToHikvision = async (provider: ServiceProvider) => {
+    setSyncingProviderId(provider.id);
+    try {
+      const res = await fetch('/api/providers/sync-hikvision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId: provider.id }),
+      });
+      const data = await res.json();
+      if (res.ok) await fetchProviders();
+      else alert(data.error || 'Erro ao sincronizar.');
+    } catch { alert('Falha de conexão.'); }
+    finally { setSyncingProviderId(null); }
+  };
+
+  const deleteProvider = async (id: string) => {
+    try {
+      await fetch('/api/providers/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      setDeletingProviderId(null);
+      await fetchProviders();
+    } catch { /* silently ignore */ }
+  };
 
   useEffect(() => {
     if (filterStatus === 'not_registered_device') {
@@ -1158,6 +1197,12 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
         >
           📷 Hikvision
         </button>
+        <button
+          onClick={() => setAdminSubTab('prestadores')}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'prestadores' ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/30' : 'text-zinc-400 hover:text-white'}`}
+        >
+          🧹 Prestadores
+        </button>
       </div>
 
       {adminSubTab === 'moradores' && (
@@ -1788,6 +1833,131 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
       {adminSubTab === 'hikvision' && (
         <HikvisionPanel />
       )}
+
+      {adminSubTab === 'prestadores' && (
+        <div className="space-y-4">
+          <div className="bg-dark-card border border-dark-border rounded-2xl p-6 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-display font-semibold text-white text-base">Prestadores de Serviço</h3>
+                <p className="text-xs text-zinc-500 mt-1">Visualize todos os prestadores cadastrados pelos moradores e sincronize com os terminais Hikvision.</p>
+              </div>
+              <button
+                onClick={fetchProviders}
+                className="p-2 rounded-lg border border-dark-border text-zinc-400 hover:text-white bg-dark-input hover:bg-dark-hover transition-all cursor-pointer"
+                title="Atualizar"
+              >
+                <RefreshCw size={13} className={loadingProviders ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            {loadingProviders && providers.length === 0 ? (
+              <div className="py-12 flex flex-col items-center gap-2 text-zinc-500 text-xs">
+                <RefreshCw size={18} className="animate-spin text-gold" /> Carregando...
+              </div>
+            ) : providers.length === 0 ? (
+              <div className="py-10 text-center text-zinc-500 text-xs bg-dark-input/30 border border-dark-border/40 rounded-xl">
+                Nenhum prestador cadastrado ainda.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {providers.map(p => {
+                  const expired = new Date(p.accessExpiry) < new Date();
+                  const hasPhoto = !!p.photoDataUrl;
+                  const hikStatus = p.hikvisionSyncStatus || {};
+                  const allSynced = hasPhoto && Object.keys(hikStatus).length > 0 && Object.values(hikStatus).every((s: any) => s.status === 'synced');
+                  return (
+                    <div key={p.id} className="flex items-center gap-4 p-4 bg-dark-input/50 border border-dark-border/50 rounded-xl">
+                      {/* Photo */}
+                      <div className="w-12 h-12 rounded-full border border-dark-border overflow-hidden bg-zinc-900 shrink-0 flex items-center justify-center">
+                        {hasPhoto
+                          ? <img src={p.photoDataUrl} alt={p.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          : <span className="text-zinc-600 text-[10px] text-center leading-tight font-mono px-1">Sem foto</span>}
+                      </div>
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-white truncate">{p.name}</p>
+                        <p className="text-[11px] text-zinc-400">{p.serviceType} — Apto {p.apartment}</p>
+                        <p className="text-[10px] text-zinc-500 font-mono">Morador: {p.residentName}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {expired ? (
+                            <span className="text-[9px] font-bold text-red-400 uppercase tracking-wider">Expirado</span>
+                          ) : p.status === 'registered' ? (
+                            <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />Ativo até {new Date(p.accessExpiry).toLocaleDateString('pt-BR')}</span>
+                          ) : (
+                            <span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider">Aguardando foto</span>
+                          )}
+                          {hasPhoto && (
+                            allSynced
+                              ? <span className="text-[9px] font-bold text-blue-400 uppercase tracking-wider">• Hik: Sincronizado</span>
+                              : <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">• Hik: Pendente</span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Actions */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {hasPhoto && (
+                          <button
+                            onClick={() => syncProviderToHikvision(p)}
+                            disabled={syncingProviderId === p.id}
+                            title="Sincronizar com Hikvision"
+                            className="px-2.5 py-1.5 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-600/30 text-blue-400 text-[10px] font-bold rounded-lg cursor-pointer transition-all disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {syncingProviderId === p.id
+                              ? <RefreshCw size={11} className="animate-spin" />
+                              : <FolderSync size={11} />}
+                            Sync
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setDeletingProviderId(p.id)}
+                          title="Remover prestador"
+                          className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-950/20 border border-transparent hover:border-red-900/10 rounded-lg cursor-pointer transition-all"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Provider delete confirmation */}
+      <AnimatePresence>
+        {deletingProviderId && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setDeletingProviderId(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-dark-card border border-red-900/40 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2.5 text-red-400">
+                <Trash2 size={22} />
+                <h3 className="font-display font-bold text-base text-white">Remover Prestador</h3>
+              </div>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                Deseja remover este prestador? O acesso facial será cancelado nos terminais.
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setDeletingProviderId(null)} className="px-3 py-1.5 bg-dark-input hover:bg-dark-hover border border-dark-border text-xs font-semibold text-zinc-400 rounded-lg cursor-pointer">
+                  Cancelar
+                </button>
+                <button onClick={() => deleteProvider(deletingProviderId)} className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-xs font-semibold text-white rounded-lg cursor-pointer">
+                  Confirmar
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* CUSTOM DELETE CONFIRMATION MODAL OVERLAY */}
       <AnimatePresence>
