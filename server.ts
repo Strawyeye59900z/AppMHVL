@@ -1462,13 +1462,13 @@ async function startServer() {
     try {
       // Use raw fetch against PocketBase REST API to bypass SDK quirks
       const token = pbAdmin.authStore.token;
-      const pbUrl = `${POCKETBASE_URL}/api/collections/serviceProviders/records?perPage=500&sort=-created`;
+      const pbUrl = `${POCKETBASE_URL}/api/collections/serviceProviders/records?perPage=500`;
       console.log(`[Providers] Fetching: ${pbUrl} token=${token ? 'ok' : 'MISSING'}`);
       const pbRes = await fetch(pbUrl, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       const pbBody = await pbRes.json();
-      console.log(`[Providers] PB response status=${pbRes.status} keys=${Object.keys(pbBody).join(',')}`);
+      console.log(`[Providers] PB response status=${pbRes.status} body=${JSON.stringify(pbBody).slice(0, 300)}`);
       if (!pbRes.ok) {
         return res.status(500).json({ error: 'PocketBase error: ' + JSON.stringify(pbBody) });
       }
