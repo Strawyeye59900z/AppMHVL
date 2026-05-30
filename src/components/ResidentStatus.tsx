@@ -20,31 +20,34 @@ export default function ResidentStatus({ resident, onLogout, onCaptureRequest, o
   const [activeSubTab, setActiveSubTab] = useState<'me' | 'packages'>(initialTab);
   useEffect(() => { setActiveSubTab(initialTab); }, [initialTab]);
 
-  // Local state for live status — only synced/deviceRegistered fields are polled
+  // Live status — polled from server independently of the resident prop
   const [syncStatus, setSyncStatus] = useState(resident.syncStatus);
   const [deviceRegistered, setDeviceRegistered] = useState(!!resident.deviceRegistered);
-  const isSynced = syncStatus === 'synced' && deviceRegistered;
-  const isSyncedRef = React.useRef(isSynced);
-  isSyncedRef.current = isSynced;
+  const doneRef = React.useRef(false);
 
-  useEffect(() => {
-    // Poll the server every 6s to check if Hikvision sync completed in background
-    // Stop polling once fully synced — use ref to avoid recreating interval on every state change
-    const interval = setInterval(async () => {
-      if (isSyncedRef.current) { clearInterval(interval); return; }
-      try {
-        const res = await fetch(`/api/residents/status/${resident.id}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        setSyncStatus(data.syncStatus);
-        setDeviceRegistered(!!data.deviceRegistered);
-        if (data.syncStatus === 'synced' && data.deviceRegistered && onResidentUpdated) {
+  const checkStatus = React.useCallback(async () => {
+    if (doneRef.current) return;
+    try {
+      const res = await fetch(`/api/residents/status/${resident.id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setSyncStatus(data.syncStatus);
+      setDeviceRegistered(!!data.deviceRegistered);
+      if (data.syncStatus === 'synced' && data.deviceRegistered) {
+        doneRef.current = true;
+        if (onResidentUpdated) {
           onResidentUpdated({ ...resident, syncStatus: data.syncStatus, deviceRegistered: data.deviceRegistered });
         }
-      } catch { /* ignore */ }
-    }, 6000);
+      }
+    } catch { /* ignore */ }
+  }, [resident.id]);
+
+  useEffect(() => {
+    doneRef.current = false;
+    checkStatus(); // immediate check on mount
+    const interval = setInterval(checkStatus, 5000);
     return () => clearInterval(interval);
-  }, [resident.id]); // only depends on ID — never recreates
+  }, [resident.id]);
 
   const [packages, setPackages] = useState<any[]>([]);
   const [loadingPackages, setLoadingPackages] = useState(false);

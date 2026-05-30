@@ -457,11 +457,15 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
     fetchEmployees();
     fetchReservations();
 
+    // Refresh residents every 10s to reflect automatic Hikvision sync status changes
+    const residentRefresh = setInterval(fetchResidents, 10000);
+
     const handleUpdate = () => {
       fetchReservations();
     };
     window.addEventListener('reservation-updated', handleUpdate);
     return () => {
+      clearInterval(residentRefresh);
       window.removeEventListener('reservation-updated', handleUpdate);
     };
   }, []);
