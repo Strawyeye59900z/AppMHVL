@@ -1099,19 +1099,24 @@ async function startServer() {
           r => r.apartment.trim().toLowerCase() === apartment.trim().toLowerCase() &&
                (!block || block.trim() === 'Único' || r.block?.trim().toLowerCase() === block.trim().toLowerCase())
         );
-        if (resident?.phone) {
-          const phone = resident.phone.replace(/\D/g, '');
+        if (!resident) console.warn(`[WhatsApp] Morador não encontrado para apto "${apartment}" ao notificar encomenda`);
+        const residentPhone = (resident as any)?.whatsapp || resident?.phone;
+        if (residentPhone) {
+          const phone = residentPhone.replace(/\D/g, '');
           const normalizedPhone = phone.startsWith('55') ? phone : '55' + phone;
           const blockStr = block && block.trim() !== 'Único' ? ` / Bloco ${block.trim()}` : '';
           const message =
             `📦 *Encomenda Chegou!*\n\n` +
-            `Olá, ${resident.name}! Uma encomenda chegou para você.\n\n` +
+            `Olá, ${resident!.name}! Uma encomenda chegou para você.\n\n` +
             `🏢 *Unidade:* Apto ${apartment.trim()}${blockStr}\n` +
             `📝 *Descrição:* ${description.trim()}\n\n` +
             `Retire na portaria assim que possível.`;
+          console.log(`[WhatsApp] Enviando notificação de encomenda para ${resident!.name} (${normalizedPhone})`);
           waClient.sendText(normalizedPhone, message).catch(err =>
-            console.error('WhatsApp package notification error:', err)
+            console.error('[WhatsApp] Erro ao enviar notificação de encomenda:', err)
           );
+        } else {
+          console.warn(`[WhatsApp] Morador ${resident?.name} (apto ${apartment}) sem phone/whatsapp cadastrado`);
         }
       }
 
