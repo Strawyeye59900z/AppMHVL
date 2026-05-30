@@ -44,14 +44,14 @@ export default function ServiceProvidersTab({ resident }: ServiceProvidersTabPro
     setError('');
     try {
       const res = await fetch(`/api/providers?residentId=${resident.id}`);
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
-        setProviders(data);
+        setProviders(Array.isArray(data) ? data : []);
       } else {
-        setError('Erro ao carregar prestadores.');
+        setError(data.error || 'Erro ao carregar prestadores.');
       }
-    } catch {
-      setError('Falha de conexão.');
+    } catch (err: any) {
+      setError('Falha de conexão: ' + (err.message || ''));
     } finally {
       setLoading(false);
     }
