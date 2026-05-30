@@ -413,22 +413,22 @@ async function startServer() {
     }
   });
 
-  // Resident Login — usa username diretamente
+  // Resident Login — username digitado → email = username@mhvl.local para authWithPassword
   app.post('/api/residents/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Usuário e senha são obrigatórios.' });
     }
+    const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '');
+    const loginEmail = `${cleanUsername}@mhvl.local`;
     try {
-      // Autentica com o username fornecido
       let authRecord: any;
       try {
-        const authResult = await pbAdmin.collection('residents').authWithPassword(username.trim().toLowerCase(), password);
+        const authResult = await pbAdmin.collection('residents').authWithPassword(loginEmail, password);
         authRecord = authResult.record;
       } catch {
         return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
       }
-      // Buscar o registro completo com todos os campos
       const resident = await pbAdmin.collection('residents').getOne(authRecord.id) as unknown as ServerResident;
       const rec = resident as any;
       rec.photoDataUrl = residentPhotoDataUrl(rec);
@@ -439,7 +439,7 @@ async function startServer() {
     }
   });
 
-  // Resident Signup — username escolhido pelo morador
+  // Resident Signup — username escolhido pelo morador (salvo no campo texto + usado como base do email)
   app.post('/api/residents/signup', async (req, res) => {
     const { name, username, apartment, password, phone } = req.body;
     const block = req.body.block || 'Único';
@@ -448,17 +448,18 @@ async function startServer() {
     }
     const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '');
     if (!cleanUsername) return res.status(400).json({ error: 'Usuário inválido.' });
+    const loginEmail = `${cleanUsername}@mhvl.local`;
     try {
-      // Verificar se username já existe
+      // Verificar se email (username) já existe
       const existingUser = await pbAdmin.collection('residents').getFirstListItem(
-        `username="${cleanUsername}"`
+        `email="${loginEmail}"`
       ).catch(() => null);
       if (existingUser) {
         return res.status(400).json({ error: 'Este nome de usuário já está em uso. Escolha outro.' });
       }
       const created = await pbAdmin.collection('residents').create({
         username: cleanUsername,
-        email: `${cleanUsername}@mhvl.local`,
+        email: loginEmail,
         password,
         passwordConfirm: password,
         name: name.trim(),
@@ -627,7 +628,7 @@ async function startServer() {
       if (newUsername) {
         const cleanUsername = newUsername.trim().toLowerCase().replace(/\s+/g, '');
         updateData.username = cleanUsername;
-        updateData.email = `${cleanUsername}@mhvl.local`;
+        updateData.email = `${cleanUsername}@mhvl.local`; // email é a identidade de auth
       }
       await pbAdmin.collection('residents').update(id, updateData);
       res.json({ success: true, message: 'Credenciais do morador redefinidas com sucesso.' });
