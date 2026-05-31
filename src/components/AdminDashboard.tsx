@@ -32,9 +32,10 @@ import { logout } from '../pocketbase';
 import { findOrCreateFolder, uploadResidentPhoto, deleteDriveFile } from '../driveService';
 import ReservationSection from './ReservationSection';
 import ReservationCalendar from './ReservationCalendar';
+import AdminAreasPanel from './AdminAreasPanel';
 import WhatsAppPanel from './WhatsAppPanel';
 import HikvisionPanel from './HikvisionPanel';
-import { Reservation } from '../types';
+import { Reservation, CommonArea } from '../types';
 
 interface AdminDashboardProps {
   user: any;
@@ -44,7 +45,15 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ user, onLogin, onLogout, onBack }: AdminDashboardProps) {
-  const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario' | 'whatsapp' | 'hikvision' | 'prestadores'>('moradores');
+  const [adminSubTab, setAdminSubTab] = useState<'moradores' | 'reservas' | 'funcionarios' | 'calendario' | 'whatsapp' | 'hikvision' | 'prestadores' | 'areas'>('moradores');
+  const [commonAreas, setCommonAreas] = useState<CommonArea[]>([]);
+
+  const fetchCommonAreas = async () => {
+    try {
+      const res = await fetch('/api/areas');
+      if (res.ok) setCommonAreas(await res.json());
+    } catch { /* silencioso */ }
+  };
   const [providers, setProviders] = useState<ServiceProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [syncingProviderId, setSyncingProviderId] = useState<string | null>(null);
@@ -473,6 +482,7 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
   useEffect(() => {
     if (adminSubTab === 'funcionarios') fetchEmployees();
     if (adminSubTab === 'prestadores') fetchProviders();
+    if (adminSubTab === 'calendario' || adminSubTab === 'reservas') fetchCommonAreas();
   }, [adminSubTab]);
 
   const fetchProviders = async () => {
@@ -1207,6 +1217,12 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
         >
           🧹 Prestadores
         </button>
+        <button
+          onClick={() => setAdminSubTab('areas')}
+          className={`flex-1 py-2 px-3 text-[11px] sm:text-xs font-semibold rounded-lg transition-all font-display cursor-pointer whitespace-nowrap ${adminSubTab === 'areas' ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/30' : 'text-zinc-400 hover:text-white'}`}
+        >
+          🏠 Áreas
+        </button>
       </div>
 
       {adminSubTab === 'moradores' && (
@@ -1792,7 +1808,11 @@ export default function AdminDashboard({ user, onLogin, onLogout, onBack }: Admi
       )}
 
       {adminSubTab === 'calendario' && (
-        <ReservationCalendar reservations={reservations} />
+        <ReservationCalendar reservations={reservations} areas={commonAreas} />
+      )}
+
+      {adminSubTab === 'areas' && (
+        <AdminAreasPanel />
       )}
 
       {adminSubTab === 'whatsapp' && (

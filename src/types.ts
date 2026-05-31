@@ -31,13 +31,26 @@ export interface SyncProgress {
   error?: string;
 }
 
+export interface CommonArea {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  icon: string;
+  color: string;
+  slots: string[];
+  maxPerDayPerApt: number;
+  active: boolean;
+  createdAt: string;
+}
+
 export interface Reservation {
   id: string;
   apartment: string;
   block: string;
   residentId: string;
   residentName: string;
-  amenity: 'quadra' | 'churrasqueira' | 'salao';
+  amenity: string;
   date: string;
   timeSlot: string;
   notes?: string;

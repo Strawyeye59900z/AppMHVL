@@ -35,10 +35,23 @@ interface ServerReservation {
   block: string;
   residentId: string;
   residentName: string;
-  amenity: 'quadra' | 'churrasqueira' | 'salao';
+  amenity: string;
   date: string; // YYYY-MM-DD
   timeSlot: string;
   notes?: string;
+  createdAt: string;
+}
+
+interface ServerCommonArea {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  icon: string;
+  color: string;
+  slots: string[];
+  maxPerDayPerApt: number;
+  active: boolean;
   createdAt: string;
 }
 
@@ -153,6 +166,34 @@ async function pbPackages() {
   return records as unknown as ServerPackage[];
 }
 
+async function pbCommonAreas(): Promise<ServerCommonArea[]> {
+  const records = await pbAdmin.collection('commonAreas').getFullList({ sort: 'createdAt' });
+  return records.map(r => ({
+    ...r,
+    slots: Array.isArray(r.slots) ? r.slots : [],
+  })) as unknown as ServerCommonArea[];
+}
+
+const DEFAULT_AREAS: Omit<ServerCommonArea, 'id' | 'createdAt'>[] = [
+  { name: 'Quadra de Esportes', slug: 'quadra', description: '', icon: 'Trophy', color: 'amber', active: true, maxPerDayPerApt: 4, slots: ['08:00 - 09:00','09:00 - 10:00','10:00 - 11:00','11:00 - 12:00','12:00 - 13:00','13:00 - 14:00','14:00 - 15:00','15:00 - 16:00','16:00 - 17:00','17:00 - 18:00','18:00 - 19:00','19:00 - 20:00','20:00 - 21:00','21:00 - 22:00'] },
+  { name: 'Churrasqueira Coberta', slug: 'churrasqueira', description: '', icon: 'Flame', color: 'orange', active: true, maxPerDayPerApt: 1, slots: ['Dia Inteiro'] },
+  { name: 'Salão de Festas', slug: 'salao', description: '', icon: 'Sparkles', color: 'purple', active: true, maxPerDayPerApt: 1, slots: ['Dia Inteiro'] },
+];
+
+async function seedDefaultAreas() {
+  try {
+    const existing = await pbAdmin.collection('commonAreas').getFullList();
+    if (existing.length === 0) {
+      for (const area of DEFAULT_AREAS) {
+        await pbAdmin.collection('commonAreas').create({ ...area, createdAt: new Date().toISOString() });
+      }
+      console.log('[CommonAreas] Áreas padrão criadas.');
+    }
+  } catch (err) {
+    console.error('[CommonAreas] Falha ao semear áreas padrão:', err);
+  }
+}
+
 async function pbSetting(key: string): Promise<any | null> {
   try {
     const record = await pbAdmin.collection('settings').getFirstListItem(`key="${key}"`);
@@ -173,17 +214,21 @@ async function pbSetSetting(key: string, value: any): Promise<void> {
 
 // ================= WHATSAPP VIA BAILEYS =================
 
-const AMENITY_NAMES_SERVER: Record<string, string> = {
-  quadra: 'Quadra de Esportes',
-  churrasqueira: 'Churrasqueira Coberta',
-  salao: 'Salão de Festas',
-};
+async function getAmenityName(slug: string): Promise<string> {
+  try {
+    const areas = await pbCommonAreas();
+    const area = areas.find(a => a.slug === slug);
+    return area ? area.name : slug;
+  } catch {
+    return slug;
+  }
+}
 
-function fillWhatsAppTemplate(template: string, resident: ServerResident, reservation: ServerReservation): string {
+async function fillWhatsAppTemplate(template: string, resident: ServerResident, reservation: ServerReservation): Promise<string> {
   const dateFormatted = new Date(reservation.date + 'T00:00:00').toLocaleDateString('pt-BR', {
     weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric',
   });
-  const amenityName = AMENITY_NAMES_SERVER[reservation.amenity] || reservation.amenity;
+  const amenityName = await getAmenityName(reservation.amenity);
   const blockStr = reservation.block && reservation.block !== 'Único' ? ` / Bloco ${reservation.block}` : '';
 
   return template
@@ -202,7 +247,7 @@ async function sendWhatsAppNotification(resident: ServerResident, reservation: S
   const phone = resident.phone.replace(/\D/g, '');
   // Garante prefixo 55 (Brasil) sem duplicar — números com DDD têm 10-11 dígitos
   const normalizedPhone = phone.startsWith('55') ? phone : '55' + phone;
-  const message = fillWhatsAppTemplate(config.templateText, resident, reservation);
+  const message = await fillWhatsAppTemplate(config.templateText, resident, reservation);
 
   try {
     await waClient.sendText(normalizedPhone, message);
@@ -436,6 +481,7 @@ async function startServer() {
 
   // Authenticate with PocketBase before serving any routes
   await initPocketBase();
+  await seedDefaultAreas();
 
   // Support up to 5MB payloads to handle base64 face captures comfortably
   app.use(express.json({ limit: '5mb' }));
@@ -737,6 +783,96 @@ async function startServer() {
     }
   });
 
+  // ================= COMMON AREAS ENDPOINTS =================
+
+  // List all active areas (public — used by residents)
+  app.get('/api/areas', async (req, res) => {
+    try {
+      const areas = await pbCommonAreas();
+      const active = areas.filter(a => a.active);
+      res.json(active);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List all areas including inactive (admin only)
+  app.get('/api/areas/all', async (req, res) => {
+    try {
+      res.json(await pbCommonAreas());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create new area (admin)
+  app.post('/api/areas', async (req, res) => {
+    const { name, slug, description, icon, color, slots, maxPerDayPerApt, active } = req.body;
+    if (!name || !slug || !slots || !Array.isArray(slots) || slots.length === 0) {
+      return res.status(400).json({ error: 'Nome, slug e ao menos um horário são obrigatórios.' });
+    }
+    const cleanSlug = slug.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    try {
+      const existing = await pbCommonAreas();
+      if (existing.some(a => a.slug === cleanSlug)) {
+        return res.status(400).json({ error: 'Já existe uma área com esse identificador (slug).' });
+      }
+      const record = await pbAdmin.collection('commonAreas').create({
+        name: name.trim(),
+        slug: cleanSlug,
+        description: description?.trim() || '',
+        icon: icon || 'MapPin',
+        color: color || 'zinc',
+        slots,
+        maxPerDayPerApt: Number(maxPerDayPerApt) || 1,
+        active: active !== false,
+        createdAt: new Date().toISOString(),
+      });
+      res.status(201).json(record);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Update area (admin)
+  app.post('/api/areas/update', async (req, res) => {
+    const { id, name, description, icon, color, slots, maxPerDayPerApt, active } = req.body;
+    if (!id) return res.status(400).json({ error: 'ID da área é obrigatório.' });
+    try {
+      const updated = await pbAdmin.collection('commonAreas').update(id, {
+        ...(name !== undefined && { name: name.trim() }),
+        ...(description !== undefined && { description: description.trim() }),
+        ...(icon !== undefined && { icon }),
+        ...(color !== undefined && { color }),
+        ...(slots !== undefined && { slots }),
+        ...(maxPerDayPerApt !== undefined && { maxPerDayPerApt: Number(maxPerDayPerApt) }),
+        ...(active !== undefined && { active }),
+      });
+      res.json({ success: true, area: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete area (admin) — blocks if has upcoming reservations
+  app.post('/api/areas/delete', async (req, res) => {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'ID da área é obrigatório.' });
+    try {
+      const area = await pbAdmin.collection('commonAreas').getOne(id) as unknown as ServerCommonArea;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const reservations = await pbReservations();
+      const upcoming = reservations.filter(r => r.amenity === area.slug && r.date >= todayStr);
+      if (upcoming.length > 0) {
+        return res.status(400).json({ error: `Não é possível excluir: existem ${upcoming.length} reserva(s) futura(s) para esta área. Cancele-as primeiro.` });
+      }
+      await pbAdmin.collection('commonAreas').delete(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ================= RESERVATION ENDPOINTS =================
 
   // Get all reservations
@@ -764,13 +900,19 @@ async function startServer() {
         return res.status(400).json({ error: 'As reservas só podem ser feitas com no máximo 3 meses de antecedência.' });
       }
       const reservations = await pbReservations();
-      if (amenity === 'quadra' && residentId !== 'admin') {
-        const count = reservations.filter(r =>
-          r.amenity === 'quadra' && r.date === date &&
-          r.apartment.toLowerCase() === apartment.trim().toLowerCase() &&
-          (r.block || 'Único').toLowerCase() === block.trim().toLowerCase()
-        ).length;
-        if (count >= 4) return res.status(400).json({ error: 'Reserva da quadra limitada a 4 períodos por dia por apartamento.' });
+      if (residentId !== 'admin') {
+        const areas = await pbCommonAreas();
+        const area = areas.find(a => a.slug === amenity);
+        if (area && area.maxPerDayPerApt > 0) {
+          const count = reservations.filter(r =>
+            r.amenity === amenity && r.date === date &&
+            r.apartment.toLowerCase() === apartment.trim().toLowerCase() &&
+            (r.block || 'Único').toLowerCase() === block.trim().toLowerCase()
+          ).length;
+          if (count >= area.maxPerDayPerApt) {
+            return res.status(400).json({ error: `Reserva de "${area.name}" limitada a ${area.maxPerDayPerApt} período(s) por dia por apartamento.` });
+          }
+        }
       }
       const isBooked = reservations.some(r => r.amenity === amenity && r.date === date && r.timeSlot === timeSlot);
       if (isBooked) return res.status(400).json({ error: 'Este horário já está reservado por outro morador.' });
