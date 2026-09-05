@@ -113,9 +113,13 @@ const pbAdmin = new PocketBase(POCKETBASE_URL);
 const pbPublic = new PocketBase(POCKETBASE_URL);
 
 async function initPocketBase() {
+  console.log('Tentando logar com a função certa (_superusers)...');
   try {
-    await pbAdmin.collection('_superusers').authWithPassword(POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD);
+    await pbAdmin.collection('_superusers').authWithPassword(POCKETBASE_ADMIN_EMAIL, POCKETBASE_ADMIN_PASSWORD, {
+      autoRefreshThreshold: 30 * 60
+    });
     console.log('PocketBase admin authenticated successfully.');
+
     // Renovar token a cada 10 minutos para nunca expirar
     setInterval(async () => {
       try {
@@ -124,9 +128,11 @@ async function initPocketBase() {
         console.error('[PocketBase] Falha ao renovar token:', e);
       }
     }, 10 * 60 * 1000);
-  } catch (err) {
-    console.error('PocketBase admin auth failed:', err);
-    process.exit(1);
+
+  } catch (err: any) {
+    console.error('⚠️ PocketBase admin auth failed:', err?.message || err);
+    console.log('Dica: Certifique-se de ter acessado http://<seu-ip>:8090/_/ no navegador para criar a conta de superusuário inicial.');
+    // Removido o process.exit(1) para evitar o loop infinito no PM2 se o banco estiver vazio
   }
 }
 
@@ -1730,7 +1736,7 @@ async function startServer() {
             const durationLabel: Record<string, string> = {
               '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
             };
-            const msg = `Olá, *${name}*! 👋\n\nO(a) morador(a) *${resident.name}* (Apto ${resident.apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Vila Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+            const msg = `Olá, *${name}*! 👋\n\nO(a) morador(a) *${resident.name}* (Apto ${resident.apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Seven Residence*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
             // We send to the provider's number if resident's number is being used as proxy —
             // since we don't have the provider's phone yet, we store the URL for the resident to forward.
             waSent = false; // Provider number not available yet — resident will share the link
@@ -1927,7 +1933,7 @@ async function startServer() {
       const durationLabel: Record<string, string> = {
         '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
       };
-      const msg = `Olá, *${providerName}*! 👋\n\nO(a) morador(a) *${residentName}* (Apto ${apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Vila Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+      const msg = `Olá, *${providerName}*! 👋\n\nO(a) morador(a) *${residentName}* (Apto ${apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Seven Residence*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
 
       // Normalise phone number (add Brazil country code if missing)
       let normalised = phone.replace(/\D/g, '');
