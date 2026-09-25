@@ -15,6 +15,7 @@ import ReservationSection from './components/ReservationSection';
 import ResidentReservationsSidePanel from './components/ResidentReservationsSidePanel';
 import EmployeePanel from './components/EmployeePanel';
 import BottomNav from './components/BottomNav';
+import ResetPasswordFirstLogin from './components/ResetPasswordFirstLogin';
 
 export default function App() {
   const [activeTab, setActiveTabRaw] = useState<'resident' | 'admin' | 'employee'>(() => {
@@ -217,16 +218,26 @@ export default function App() {
           /* RESIDENT FLOW COORDINATOR */
           <div className="w-full flex justify-center">
             {!loggedInResident ? (
-              <ResidentAuth 
-                onLoginSuccess={handleResidentLogin} 
+              <ResidentAuth
+                onLoginSuccess={handleResidentLogin}
                 onAdminInitiate={() => { localStorage.setItem('activeTab', 'admin'); setActiveTab('admin'); }}
                 onEmployeeInitiate={() => setActiveTab('employee')}
               />
+            ) : loggedInResident.firstLogin ? (
+              /* Require password reset on first login */
+              <ResetPasswordFirstLogin
+                resident={loggedInResident}
+                onPasswordReset={(updatedResident) => {
+                  localStorage.setItem('loggedInResident', JSON.stringify(updatedResident));
+                  setLoggedInResident(updatedResident);
+                }}
+                onCancel={() => handleResidentLogout()}
+              />
             ) : !loggedInResident.photoDataUrl ? (
               /* Make photo mandatory only for the first person (who created the account/login) */
-              <CameraCapture 
-                resident={loggedInResident} 
-                onCaptureCompleted={handleResidentCaptureCompleted} 
+              <CameraCapture
+                resident={loggedInResident}
+                onCaptureCompleted={handleResidentCaptureCompleted}
                 onCancel={() => setLoggedInResident(null)}
               />
             ) : captureTarget ? (
