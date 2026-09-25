@@ -478,7 +478,7 @@ async function startServer() {
         phone: phone ? phone.trim() : '',
         registeredAt: new Date().toISOString(),
         syncStatus: 'pending',
-        firstLogin: false,
+        firstLogin: true,
       });
       res.status(201).json(created);
     } catch (err: any) {
@@ -642,6 +642,34 @@ async function startServer() {
       }
       await pbAdmin.collection('residents').update(id, updateData);
       res.json({ success: true, message: 'Credenciais do morador redefinidas com sucesso.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Change password on first login (called by Resident)
+  app.post('/api/residents/change-password-first-login', async (req, res) => {
+    const { residentId, newPassword } = req.body;
+    if (!residentId || !newPassword) {
+      return res.status(400).json({ error: 'ResidentId e nova senha são obrigatórios.' });
+    }
+    if (newPassword.length < 4) {
+      return res.status(400).json({ error: 'A senha deve ter no mínimo 4 caracteres.' });
+    }
+    try {
+      const resident = await pbAdmin.collection('residents').getOne(residentId);
+      if (!resident) {
+        return res.status(404).json({ error: 'Morador não encontrado.' });
+      }
+      const updated = await pbAdmin.collection('residents').update(residentId, {
+        password: newPassword,
+        passwordConfirm: newPassword,
+        firstLogin: false,
+      }) as unknown as ServerResident;
+      const rec = updated as any;
+      rec.photoDataUrl = residentPhotoDataUrl(rec);
+      const { password: _, ...safeResident } = rec;
+      res.json(safeResident);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
