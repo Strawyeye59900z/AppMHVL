@@ -293,7 +293,7 @@ async function ensureFaceLib(base: string, client: any): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
-      FPLibInfo: { faceLibType: 'blackFD', name: 'CondominioFaces', customInfo: 'AppMHVL' },
+      FPLibInfo: { faceLibType: 'blackFD', name: 'CondominioFaces', customInfo: 'AppSevenResidence' },
     }),
     signal: AbortSignal.timeout(10000),
   });
@@ -519,14 +519,14 @@ async function startServer() {
     }
   });
 
-  // Resident Login — username digitado → email = username@mhvl.local para authWithPassword
+  // Resident Login — username digitado → email = username@sevenresidence.local para authWithPassword
   app.post('/api/residents/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Usuário e senha são obrigatórios.' });
     }
     const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '');
-    const loginEmail = `${cleanUsername}@mhvl.local`;
+    const loginEmail = `${cleanUsername}@sevenresidence.local`;
     try {
       let authRecord: any;
       try {
@@ -554,7 +554,7 @@ async function startServer() {
     }
     const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '');
     if (!cleanUsername) return res.status(400).json({ error: 'Usuário inválido.' });
-    const loginEmail = `${cleanUsername}@mhvl.local`;
+    const loginEmail = `${cleanUsername}@sevenresidence.local`;
     try {
       // Verificar se email (username) já existe
       const existingUser = await pbAdmin.collection('residents').getFirstListItem(
@@ -611,7 +611,7 @@ async function startServer() {
       const memberUsername = `apt${apartment.trim()}_bloco${block.trim().replace(/\s+/g, '')}_${Date.now()}`;
       const newMember = await pbAdmin.collection('residents').create({
         username: memberUsername,
-        email: `${memberUsername}@mhvl.local`,
+        email: `${memberUsername}@sevenresidence.local`,
         password: memberPassword,
         passwordConfirm: memberPassword,
         name: name.trim(),
@@ -734,7 +734,7 @@ async function startServer() {
       if (newUsername) {
         const cleanUsername = newUsername.trim().toLowerCase().replace(/\s+/g, '');
         updateData.username = cleanUsername;
-        updateData.email = `${cleanUsername}@mhvl.local`; // email é a identidade de auth
+        updateData.email = `${cleanUsername}@sevenresidence.local`; // email é a identidade de auth
       }
       await pbAdmin.collection('residents').update(id, updateData);
       res.json({ success: true, message: 'Credenciais do morador redefinidas com sucesso.' });
@@ -755,7 +755,7 @@ async function startServer() {
           const cleanUsername = newUsername.toLowerCase();
           await pbAdmin.collection('residents').update(r.id, {
             username: cleanUsername,
-            email: `${cleanUsername}@mhvl.local`,
+            email: `${cleanUsername}@sevenresidence.local`,
           });
           results.push(`${r.name} → username: ${cleanUsername}`);
         }
@@ -1106,7 +1106,7 @@ async function startServer() {
       }
       try {
         // Usa email como identidade (username pode estar vazio em registros antigos)
-        const empEmail = (employee as any).email || `${employee.username}@mhvl.local`;
+        const empEmail = (employee as any).email || `${employee.username}@sevenresidence.local`;
         await pbPublic.collection('employees').authWithPassword(empEmail, password);
       } catch {
         return res.status(401).json({ error: 'Senha incorreta.' });
@@ -1172,7 +1172,7 @@ async function startServer() {
       const username = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '') + '_' + ts;
       const newEmployee = await pbAdmin.collection('employees').create({
         username,
-        email: `${username}@mhvl.local`,
+        email: `${username}@sevenresidence.local`,
         password: tempPassword,
         passwordConfirm: tempPassword,
         name: name.trim(),
@@ -1730,7 +1730,7 @@ async function startServer() {
             const durationLabel: Record<string, string> = {
               '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
             };
-            const msg = `Olá, *${name}*! 👋\n\nO(a) morador(a) *${resident.name}* (Apto ${resident.apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Vila Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+            const msg = `Olá, *${name}*! 👋\n\nO(a) morador(a) *${resident.name}* (Apto ${resident.apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Seven Residence*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
             // We send to the provider's number if resident's number is being used as proxy —
             // since we don't have the provider's phone yet, we store the URL for the resident to forward.
             waSent = false; // Provider number not available yet — resident will share the link
@@ -1927,7 +1927,7 @@ async function startServer() {
       const durationLabel: Record<string, string> = {
         '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
       };
-      const msg = `Olá, *${providerName}*! 👋\n\nO(a) morador(a) *${residentName}* (Apto ${apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Vila Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+      const msg = `Olá, *${providerName}*! 👋\n\nO(a) morador(a) *${residentName}* (Apto ${apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Seven Residence*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
 
       // Normalise phone number (add Brazil country code if missing)
       let normalised = phone.replace(/\D/g, '');
