@@ -13,7 +13,7 @@ export default defineConfig(() => {
     },
     server: {
       host: true,
-      allowedHosts: ["app.7-residence.com"],
+      allowedHosts: ["7-residence.com"],
       // HMR can be disabled via the DISABLE_HMR env var to avoid flicker during edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU.
