@@ -1730,7 +1730,7 @@ async function startServer() {
             const durationLabel: Record<string, string> = {
               '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
             };
-            const msg = `Olá, *${name}*! 👋\n\nO(a) morador(a) *${resident.name}* (Apto ${resident.apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Seven Residence*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+            const msg = `Olá, *${name}*! 👋\n\nO(a) morador(a) *${resident.name}* (Apto ${resident.apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Villa Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
             // We send to the provider's number if resident's number is being used as proxy —
             // since we don't have the provider's phone yet, we store the URL for the resident to forward.
             waSent = false; // Provider number not available yet — resident will share the link
@@ -1927,7 +1927,7 @@ async function startServer() {
       const durationLabel: Record<string, string> = {
         '7d': '7 dias', '30d': '1 mês', '90d': '3 meses', '180d': '6 meses', '365d': '1 ano',
       };
-      const msg = `Olá, *${providerName}*! 👋\n\nO(a) morador(a) *${residentName}* (Apto ${apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Seven Residence*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
+      const msg = `Olá, *${providerName}*! 👋\n\nO(a) morador(a) *${residentName}* (Apto ${apartment}) te convidou para cadastrar sua foto facial no sistema do condomínio *Mansão Heitor Villa Lobos*.\n\nSeu acesso terá duração de *${durationLabel[accessDuration] || accessDuration}*.\n\nClique no link abaixo para tirar sua foto e concluir o cadastro:\n${registrationUrl}\n\n_Este link expira em 48 horas._`;
 
       // Normalise phone number (add Brazil country code if missing)
       let normalised = phone.replace(/\D/g, '');
